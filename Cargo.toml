@@ -1,0 +1,15 @@
+[package]
+name = "rabbitcontrol-win"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+ironrdp-displaycontrol = "0.5"
+# 0.37 is the last windows-rs release with the inbox Windows.UI.Xaml projections.
+windows = { version = "0.37", features = [
+    "alloc", "Foundation", "UI_Xaml_Controls", "UI_Xaml_Hosting", "UI_Xaml_Markup",
+    "Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader",
+    "Win32_System_WinRT_Xaml", "Win32_UI_WindowsAndMessaging",
+] }
