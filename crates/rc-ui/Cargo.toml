@@ -13,10 +13,8 @@ path = "src/main.rs"
 
 [dependencies]
 rc-platform-win = { path = "../rc-platform-win" }
-ironrdp-displaycontrol = "0.5"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "native-tls"] }
-serde.workspace = true
-winreg = "0.55"
+rc-client-core.workspace = true
+rc-types.workspace = true
 # 0.37 is the last windows-rs release with the inbox Windows.UI.Xaml projections.
 windows = { version = "0.37", features = [
     "alloc", "Foundation", "System", "UI_Xaml_Controls_Primitives", "UI_Xaml_Hosting", "UI_Xaml_Markup", "UI_Xaml_Input",

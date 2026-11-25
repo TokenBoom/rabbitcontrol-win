@@ -1,6 +1,6 @@
-use ironrdp_displaycontrol::pdu::MonitorLayoutEntry;
+use rc_types::Resolution;
 
-// Use the protocol's validated primary-monitor dimensions for the local framebuffer.
-pub fn initial_monitor() -> Result<MonitorLayoutEntry, Box<dyn std::error::Error>> {
-    Ok(MonitorLayoutEntry::new_primary(1280, 720)?)
+// 使用默认主显示器逻辑尺寸作为空闲画布初始尺寸。
+pub fn initial_resolution() -> Resolution {
+    Resolution::new(1280, 720)
 }

@@ -80,14 +80,14 @@ cargo run -p rc-cli -- probe
 
 ## 登录与服务器设置
 
-在登录页选择「服务器设置」并填写 RabbitControl 服务端地址。只填写主机名时默认使用 HTTPS 和端口 21118，也可以指定完整地址，例如 `https://remote.example.com`。本机回环地址支持 HTTP 调试。首次启动使用 `https://127.0.0.1:21118`。保存后新地址立即生效，并写入当前用户注册表 `HKCU\Software\RabbitControl\Windows` 的 `ServerOrigin` 值，重启后可继续使用。
+在登录页选择「服务器设置」并填写 RabbitControl 服务端地址。只填写主机名时默认使用 HTTPS 和端口 21118，也可以指定完整地址，例如 `https://remote.example.com`。本机回环地址支持 HTTP 调试。保存地址时客户端会通过 `rc-client-core` 探测 `/api/v1/health` 与 `/api/v1/pki/ca`，完成 Root CA 的 TOFU 校验后将服务器配置原子持久化至 `%USERPROFILE%\.config\rabbitcontrol\server.json`。
 
-使用该服务器的账号邮箱和密码登录。客户端在后台请求 `POST /api/v1/auth/login`，令牌仅保存在进程内存中。登录成功后显示账号和 1280 × 720 的待连接桌面。选择「退出登录」会调用 `POST /api/v1/auth/logout` 并回到登录页。
+使用该服务器的账号邮箱和密码登录。客户端通过 `rc-client-core` 的认证与证书管理器完成 `/api/v1/auth/login` 登录、设备绑定（`POST /api/v1/me/devices/bind`）与 mTLS 设备证书签发，并在后台线程自动轮换临期 Token 与续签 `< 48h` 设备证书。登录凭据保存在 `%USERPROFILE%\.config\rabbitcontrol\auth.json`，设备密钥与证书保存在 `%USERPROFILE%\.config\rabbitcontrol\certs\`，下次启动可静默恢复会话。登录成功后显示账号、本机 9 位设备码、已绑定设备摘要和 1280 × 720 的待连接桌面。选择「退出登录」会清理本地凭据与证书并通知服务端注销。
 
 ## rc-ui 结构
 
 - `src/shell.rs` 用 windows-rs 封装 Win32 窗口、STA 消息循环和系统 XAML Island 的生命周期。
 - `src/view.xaml` 定义主界面和桌面视口，编译时嵌入可执行文件。
-- `src/app.rs` 管理页面和异步结果，`src/auth.rs` 处理认证请求，`src/settings.rs` 解析和持久化服务器地址。
+- `src/app.rs` 管理页面和异步结果，`src/auth.rs` 接入 `rc-client-core` 的认证会话与设备证书管理，`src/settings.rs` 封装服务器地址解析、健康探测与 `server.json` 持久化。
 - `src/graphics.rs` 将 D3D11 的 DXGI composition swap chain 绑定到 SwapChainPanel，呈现空闲帧。硬件设备不可用时使用 WARP。
-- `src/desktop.rs` 使用 IronRDP 的 Display Control 类型建立初始主显示器配置。该尺寸同时用于交换链和状态栏。RDP 网络握手、解码和输入转发留给后续会话层实现。
+- `src/desktop.rs` 使用 `rc-types::Resolution` 提供待连接桌面的初始尺寸配置。

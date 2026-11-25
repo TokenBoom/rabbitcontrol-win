@@ -104,7 +104,7 @@
     <StackPanel Margin="24,24">
       <Button x:Name="Back" Content="‹  返回登录" Style="{StaticResource Link}" Margin="-8,0,0,22"/>
       <TextBlock Text="服务器设置" FontSize="28" FontWeight="SemiBold" Foreground="#151E31"/>
-      <TextBlock Text="登录时将连接到此 RabbitControl 服务器。" FontSize="14" Foreground="#64718A" Margin="0,10,0,30" TextWrapping="Wrap"/>
+      <TextBlock Text="连接时将自动探测服务器并校验 Root CA 证书。" FontSize="14" Foreground="#64718A" Margin="0,10,0,30" TextWrapping="Wrap"/>
       <TextBlock Text="服务器地址" Style="{StaticResource FieldLabel}"/>
       <TextBox x:Name="Origin" AutomationProperties.Name="服务器地址" PlaceholderText="https://主机:端口" FontSize="15" Margin="0,6,0,8"/>
       <TextBlock Text="仅填主机名时使用 HTTPS 和端口 21118，也可输入完整地址。本机调试支持 HTTP。" FontSize="12" Foreground="#68768D" TextWrapping="Wrap"/>
@@ -121,16 +121,19 @@
         <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE7F4;" Foreground="#346CFF"/>
         <TextBlock Text="远程桌面" FontSize="20" FontWeight="SemiBold"/>
       </StackPanel>
-      <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right" Spacing="8">
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right" Spacing="10">
+        <TextBlock x:Name="LocalDeviceId" FontFamily="Consolas" VerticalAlignment="Center" Foreground="#346CFF" FontWeight="SemiBold"/>
         <TextBlock x:Name="Account" MaxWidth="210" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Foreground="#516278"/>
+        <Button x:Name="RefreshDevices" Content="刷新设备" Style="{StaticResource Link}"/>
         <Button x:Name="SignOut" Content="退出登录" Style="{StaticResource Link}"/>
       </StackPanel>
     </Grid>
     <Grid Grid.Row="1" Margin="20,0" Background="#101922" BorderBrush="#CDD8E4" BorderThickness="1">
       <Viewbox Stretch="Uniform"><SwapChainPanel x:Name="Framebuffer"/></Viewbox>
-      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="14" IsHitTestVisible="False">
+      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12" MaxWidth="560" IsHitTestVisible="False">
         <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE7F4;" FontSize="40" Foreground="#ADC9FF"/>
-        <TextBlock Text="暂无远程会话" Foreground="White" FontSize="21" FontWeight="SemiBold"/>
+        <TextBlock Text="暂无远程会话" HorizontalAlignment="Center" Foreground="White" FontSize="21" FontWeight="SemiBold"/>
+        <TextBlock x:Name="DeviceSummary" Foreground="#C5D4E8" FontSize="13" TextAlignment="Center" TextWrapping="Wrap"/>
       </StackPanel>
     </Grid>
     <Grid Grid.Row="2" Margin="24,0">
