@@ -1,10 +1,12 @@
-//! RabbitControl Windows 平台能力总成（对应 macOS `rc-platform-macos`）。
+//! RabbitControl Windows 平台能力总成。
 //!
-//! 统一将 Windows 原生硬件后端（DXGI/WGC 采集、Media Foundation 编解码、
+//! 统一将 Windows 原生后端（DXGI/WGC 采集、Media Foundation 编解码、
 //! D3D11 渲染、SendInput 输入、WASAPI 音频、Win32 剪贴板与显示器控制）
-//! 注册至 [`rabbitcontrol-core`](rc_pipeline) 对应的抽象提供者槽位。
+//! 注册至 rabbitcontrol-core 的抽象提供者槽位。
 //!
-//! 主程序 / Host 驻留端 / CLI 入口最早阶段调用 [`register_all`] 即可。
+//! 主程序 / 被控代理 / CLI 入口最早阶段调用 [`register_all`] 即可。
+//! 各后端共享 [`rc_d3d11::SharedDevice`] 设备与 [`rc_win32core`] 的
+//! COM/消息/时钟设施，由本 crate 保证初始化顺序。
 
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
@@ -29,11 +31,11 @@ struct WinMediaProvider;
 
 impl PlatformMediaProvider for WinMediaProvider {
     fn host_clock_us(&self) -> Option<u64> {
-        Some(rc_capture_win::host_time_us())
+        Some(rc_win32core::host_time_us())
     }
 
     fn promote_current_thread_qos(&self) {
-        rc_capture_win::promote_current_thread_qos();
+        rc_win32core::promote_current_thread_qos();
     }
 
     fn create_capture(
@@ -105,7 +107,7 @@ struct WinClientPlatformHooks;
 
 impl ClientPlatformHooks for WinClientPlatformHooks {
     fn promote_current_thread_qos(&self) {
-        rc_capture_win::promote_current_thread_qos();
+        rc_win32core::promote_current_thread_qos();
     }
 
     fn begin_latency_critical_activity(
@@ -113,10 +115,9 @@ impl ClientPlatformHooks for WinClientPlatformHooks {
         reason: &str,
         interactive: bool,
     ) -> Option<Box<dyn Any + Send>> {
-        Some(Box::new(rc_capture_win::LatencyCriticalActivity::begin(
-            reason,
-            interactive,
-        )))
+        rc_win32core::PowerRequest::begin(reason, interactive)
+            .ok()
+            .map(|r| Box::new(r) as Box<dyn Any + Send>)
     }
 
     fn main_display_logical_resolution(&self) -> Option<Resolution> {

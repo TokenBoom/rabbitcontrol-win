@@ -1,19 +1,20 @@
-//! RabbitControl Windows 输入注入与捕获（对应 macOS `rc-input-macos` / CGEventTap）。
+//! RabbitControl Windows 输入注入与捕获。
 //!
-//! # 设计
+//! # 注入（被控侧）
 //!
-//! - **注入**（被控侧）：`SendInput` 批量注入键鼠事件；坐标用
-//!   [`rc_input::denormalize_coord`] 反归一化后按虚拟屏（多显示器）映射，
-//!   `MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK`；需要 UIAccess/完整性级别
-//!   处理 UAC 安全桌面场景（与服务端 `rc-daemon` 高权限会话协同）。
-//! - **捕获**（主控侧）：`SetWindowsHookExW` 低级键鼠钩子
-//!   （`WH_KEYBOARD_LL` / `WH_MOUSE_LL`），用于会话内全屏沉浸式捕获
-//!   与本地快捷键放行。
-//! - 键位映射 `keymap` 模块：core `KeyCode` ↔ Windows 扫描码/虚拟键码。
+//! `SendInput` 批量注入键鼠事件。坐标经 core 的归一化协议还原后按
+//! 虚拟屏映射（`MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK` 覆盖
+//! 多显示器）；对 UAC 安全桌面/锁屏等高完整性上下文，普通用户进程
+//! 的 SendInput 会被 UIPI 拦截——这些场景由 rc-daemon（LocalSystem
+//! 服务）代理注入，用户会话代理经命名管道转发事件。
 //!
-//! # 当前状态
+//! # 捕获（主控侧）
 //!
-//! 骨架占位：注入/捕获均返回未实现错误。
+//! 全屏沉浸会话中需要把本地键鼠（含系统快捷键）重定向到远端：
+//! `SetWindowsHookExW` 低级钩子（`WH_KEYBOARD_LL`/`WH_MOUSE_LL`）
+//! 拦截后在消息泵线程分发，本地放行规则（如 Ctrl+Alt+Del 不可拦截、
+//! Win 键组合可选放行）由会话配置决定。钩子依赖
+//! [`rc_win32core::MessageWindow`] 的消息泵。
 
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]

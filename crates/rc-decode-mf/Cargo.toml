@@ -1,6 +1,6 @@
 [package]
 name = "rc-decode-mf"
-description = "RabbitControl Windows hardware video decoder (Media Foundation)"
+description = "RabbitControl Windows hardware video decoder (Media Foundation / D3D11VA)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,3 +11,5 @@ rc-capture.workspace = true
 rc-decode.workspace = true
 rc-encode.workspace = true
 rc-types.workspace = true
+rc-d3d11 = { path = "../rc-d3d11" }
+rc-win32core = { path = "../rc-win32core" }

@@ -9,3 +9,4 @@ license.workspace = true
 [dependencies]
 rc-types.workspace = true
 serde.workspace = true
+rc-win32core = { path = "../rc-win32core" }

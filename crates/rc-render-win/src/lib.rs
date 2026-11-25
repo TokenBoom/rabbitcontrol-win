@@ -1,13 +1,16 @@
-//! RabbitControl Windows D3D11 渲染器（对应 macOS `rc-render-macos` / Metal）。
+//! RabbitControl Windows D3D11 渲染器。
 //!
 //! # 设计
 //!
-//! - D3D11 设备 + DXGI composition swap chain，绑定到 XAML `SwapChainPanel`
-//!   （rc-ui 桌面视口）或独立交换链；
-//! - 解码输出的 [`FrameTexture::D3D11`] 纹理零拷贝作为 shader resource 直接采样，
-//!   NV12 → RGB 转换在像素着色器内完成；
-//! - 光标合成（对应 macOS `cursor_compositing`）：remote cursor 叠加渲染；
-//! - 硬件设备不可用时回落 WARP（与现有 rc-ui `graphics.rs` 一致）。
+//! - **零拷贝上屏**：解码输出纹理与渲染器同在 [`rc_d3d11::SharedDevice`]
+//!   共享设备上，`CreateShaderResourceView` 直接采样；NV12 → RGB 转换
+//!   在像素着色器内完成（UV 双平面双采样）。
+//! - **呈现目标**： DXGI composition swap chain 绑定到 XAML
+//!   `SwapChainPanel`（rc-ui 桌面视口，`ISwapChainPanelNative`），
+//!   或独立 `HWND` 交换链（全屏沉浸模式）；硬件设备不可用时共享设备
+//!   本身已回落 WARP，渲染路径不变。
+//! - **光标合成**：远程光标纹理作为叠加 quad 在同一 pass 渲染，
+//!   避免系统光标与远程画面错位。
 //!
 //! # 当前状态
 //!
@@ -20,7 +23,7 @@ use rc_decode::DecodedFrame;
 use rc_render::Renderer;
 use rc_types::{Error, Result, Timestamp};
 
-/// D3D11 渲染器配置（对应 `MetalRendererConfig`）。
+/// D3D11 渲染器配置。
 #[derive(Debug, Clone, Copy)]
 pub struct D3d11RendererConfig {
     /// 渲染目标尺寸（宽, 高）。
@@ -41,15 +44,17 @@ pub struct D3d11Renderer {
 impl D3d11Renderer {
     /// 创建独立渲染器（自带交换链）。
     pub fn new(cfg: D3d11RendererConfig) -> Result<Self> {
-        // TODO: D3D11CreateDevice（BGRA 支持 + 失败回落 WARP）。
+        // TODO: rc_d3d11::SharedDevice::get() → 编译 NV12 转换着色器 →
+        // 创建 composition swap chain。
         Ok(Self { cfg })
     }
 
-    /// 从 XAML `SwapChainPanel` 原生指针创建渲染器（对应 macOS `from_raw_layer`）。
+    /// 从 XAML `SwapChainPanel` 原生指针创建渲染器。
     ///
-    /// # Safety
-    /// 骨架占位，暂不触碰指针；实现时需要 unsafe 转换 `ISwapChainPanelNative`。
+    /// `raw` 为 `ISwapChainPanelNative` 接口指针值（由 rc-ui 通过
+    /// core 的 `PreallocatedRenderSurface` 传入）。
     pub fn from_raw_panel(_raw: usize, cfg: D3d11RendererConfig) -> Result<Self> {
+        // TODO: QueryInterface ISwapChainPanelNative → SetSwapChain。
         Self::new(cfg)
     }
 
@@ -61,14 +66,15 @@ impl D3d11Renderer {
 
 impl Renderer for D3d11Renderer {
     fn present(&mut self, _frame: DecodedFrame) -> Result<Timestamp> {
-        // TODO: 采样解码纹理 → 全屏三角形 → Present(0, 0)（非阻塞）。
+        // TODO: 采样解码纹理 → 全屏三角形 → Present(0, 0) 非阻塞提交；
+        // 返回上屏完成时刻供延迟统计。
         Err(Error::InvalidConfig(
             "d3d11 renderer not yet implemented".into(),
         ))
     }
 
     fn resize(&mut self, size: (u32, u32)) -> Result<()> {
-        // TODO: ResizeBuffers。
+        // TODO: ResizeBuffers（先释放 render target view）。
         self.cfg.size = size;
         Ok(())
     }
@@ -78,6 +84,6 @@ impl Renderer for D3d11Renderer {
     }
 
     fn set_cursor(&mut self, _pos: (i32, i32), _visible: bool) {
-        // TODO: 光标合成状态。
+        // TODO: 更新光标 quad 顶点/可见性。
     }
 }

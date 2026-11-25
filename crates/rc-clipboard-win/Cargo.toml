@@ -9,3 +9,4 @@ license.workspace = true
 [dependencies]
 rc-session.workspace = true
 rc-types.workspace = true
+rc-win32core = { path = "../rc-win32core" }

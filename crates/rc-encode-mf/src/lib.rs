@@ -1,15 +1,23 @@
-//! RabbitControl Windows 硬件视频编码器（Media Foundation，对应 macOS `rc-encode-vt`）。
+//! RabbitControl Windows 硬件视频编码器（Media Foundation）。
 //!
 //! # 设计
 //!
 //! 基于 Media Foundation Transform (MFT) 的硬件 H.264/HEVC 编码：
-//! - `MFTEnumEx` 枚举 `MFT_CATEGORY_VIDEO_ENCODER`，优先硬件异步 MFT
-//!   （Intel QuickSync / NVIDIA NVENC 的 MF 封装）；
-//! - 输入直接吃 [`FrameTexture::D3D11`] 纹理（`IMFDXGIBuffer` → `IMFSample`），
-//!   零拷贝；CPU 帧走 `MFCreateMemoryBuffer` 上传路径；
-//! - 低延迟配置满足契约 E1/E2：`CODECAPI_AVLowLatencyMode`、
-//!   `b_frames = 0`、无限 GOP 按需 IDR（`CODECAPI_AVEncVideoForceKeyframe`）；
-//! - 输出 Annex-B（长度前缀 → 起始码转换见 `annexb` 模块，对应 macOS 同名实现）。
+//!
+//! - **MFT 选择**：`MFTEnumEx` 枚举 `MFT_CATEGORY_VIDEO_ENCODER`，按
+//!   `MFT_ENUM_FLAG_HARDWARE` 优先硬件异步 MFT（Intel QuickSync /
+//!   NVIDIA NVENC / AMD AMF 的 MF 封装）；异步 MFT 经 `IMFMediaEventGenerator`
+//!   事件驱动，支持 core 契约的 2-deep 流水线编码。
+//! - **零拷贝输入**：采集纹理来自 [`rc_d3d11::SharedDevice`] 共享设备，
+//!   `MFCreateDXGISurfaceBuffer` 把 `ID3D11Texture2D` 直接包装成
+//!   `IMFSample` 投喂，无 GPU→CPU→GPU 往返；CPU 帧（假后端回环）
+//!   走 staging 纹理上传路径。
+//! - **低延迟契约**：`CODECAPI_AVLowLatencyMode` 开启、无限 GOP 按需
+//!   IDR（`CODECAPI_AVEncVideoForceKeyframe`）、禁用 B 帧——core 的
+//!   [`EncoderConfig::validate`] 在构造期已强制 E1/E2，这里负责映射到
+//!   MF 属性。
+//! - **输出格式**：Annex-B（MF 输出长度前缀码流，在拷贝进输出缓冲时
+//!   就地转换为起始码，避免二次分配）。
 //!
 //! # 当前状态
 //!
@@ -32,8 +40,10 @@ impl MfEncoder {
     /// 构造编码器。违反延迟红线（E1/E2）的配置在构造期被拒绝。
     pub fn new(cfg: EncoderConfig) -> Result<Self> {
         cfg.validate()?;
-        // TODO: MFStartup → MFTEnumEx 选硬件 MFT → 设置输入/输出媒体类型
-        // （MF_MT_FRAME_SIZE / low latency / bitrate）→ ProcessMessage 启动。
+        // TODO: MFStartup（在 rc_win32core::ComApartment MTA 内）→
+        // MFTEnumEx 选硬件异步 MFT → 输入类型 MFVideoFormat_NV12/D3D11、
+        // 输出类型 H264/HEVC  Annex-B → low latency / bitrate / GOP 属性
+        // → ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM)。
         Ok(Self {
             cfg,
             idr_pending: false,
@@ -48,7 +58,8 @@ impl Encoder for MfEncoder {
         _force_idr: bool,
         _deadline_ts: Timestamp,
     ) -> Result<EncodedFrame> {
-        // TODO: ProcessInput（D3D11 纹理零拷贝）→ ProcessOutput  drain → Annex-B 拼装。
+        // TODO: MFCreateDXGISurfaceBuffer 包装输入纹理 → ProcessInput →
+        // 事件循环 ProcessOutput drain → 长度前缀转 Annex-B 拼装输出。
         Err(Error::InvalidConfig(
             "mf encoder not yet implemented".into(),
         ))

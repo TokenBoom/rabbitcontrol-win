@@ -1,16 +1,21 @@
-//! RabbitControl Windows 后台守护服务（对应 macOS `rc-daemon` / LaunchDaemon）。
+//! RabbitControl Windows 后台服务。
 //!
 //! # 设计
 //!
-//! - 以 Windows Service 运行（`StartServiceCtrlDispatcherW`），LocalSystem
-//!   权限，覆盖锁屏/UAC 安全桌面下的采集与输入注入；
-//! - 双会话协同：服务进程负责被控会话与硬件访问，用户会话内的
-//!   `rc-host-win` 托盘负责交互（对应 macOS LaunchDaemon/LaunchAgent 分工）；
-//! - 与桌面端经 IPC（命名管道 `\\.\pipe\rabbitcontrol-win`）通信。
+//! - 以 Windows Service 运行（`StartServiceCtrlDispatcherW`），
+//!   LocalSystem 权限；服务控制管理器命令（安装/启动/停止/卸载）
+//!   作为子命令暴露；
+//! - 职责仅限需要提权或跨会话的操作：UAC 安全桌面/锁屏下的输入
+//!   注入代理、显示模式切换、agent（rc-host-win）进程监管——用户
+//!   登录会话变化时（`WTSRegisterSessionNotification`）在对应会话
+//!   拉起/回收 agent（`CreateProcessAsUserW`）；
+//! - 与 agent 经命名管道 `\.\pipe\rabbitcontrol-win` 通信；
+//! - 实际的采集/编解码/渲染全部发生在用户会话的 agent 内，
+//!   Session 0 摸不到用户桌面，本服务不碰媒体链路。
 //!
 //! # 当前状态
 //!
-//! 骨架占位：直接运行打印状态后退出，服务注册表集成待实现。
+//! 骨架占位：直接运行打印状态后退出，服务控制分发待实现。
 
 fn main() {
     rc_platform_win::register_all();

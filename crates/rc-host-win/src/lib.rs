@@ -1,14 +1,19 @@
-//! RabbitControl Windows 被控驻留端（系统托盘 + 连接审批，对应 macOS `rc-host-macos` / AppKit 状态栏）。
+//! RabbitControl Windows 被控端用户会话代理。
 //!
-//! # 设计
+//! # 为什么需要它
 //!
-//! - 系统托盘图标（`Shell_NotifyIconW` + 消息窗口），菜单项：
-//!   会话状态、断开连接、退出；
-//! - 接入审批窗：新控制会话请求时弹出原生批准/拒绝对话框
-//!   （对应 macOS 审批窗）；
-//! - 与 `rc-daemon`（Windows 服务）经 IPC 协同：服务负责会话与
-//!   输入注入高权限上下文，托盘负责用户交互；
-//! - 状态机 `state` 模块对应 macOS 同名实现。
+//! Windows 服务运行在 Session 0，看不到也摸不到用户桌面：采集
+//! （DXGI duplication 作用于用户会话的显示器）、输入注入（UIPI）、
+//! 托盘交互都必须发生在登录用户的会话内。因此被控端是双进程：
+//!
+//! - **本 crate（agent）**：登录会话内驻留，托盘图标
+//!   （`Shell_NotifyIconW` + [`rc_win32core::MessageWindow`] 消息泵）、
+//!   连接审批对话框、实际的采集/注入/渲染执行者；
+//! - **rc-daemon（服务）**：LocalSystem 权限，处理 UAC 安全桌面/
+//!   锁屏场景的输入注入、显示模式切换提权操作、agent 进程监管
+//!   （崩溃重启、登录会话变化时在新会话拉起 agent）。
+//!
+//! 两者经命名管道 `\.\pipe\rabbitcontrol-win` 通信。
 //!
 //! # 当前状态
 //!

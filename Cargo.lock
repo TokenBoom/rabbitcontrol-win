@@ -1395,6 +1395,7 @@ version = "0.1.0"
 dependencies = [
  "rc-audio",
  "rc-types",
+ "rc-win32core",
 ]
 
 [[package]]
@@ -1410,7 +1411,9 @@ name = "rc-capture-win"
 version = "0.1.0"
 dependencies = [
  "rc-capture",
+ "rc-d3d11",
  "rc-types",
+ "rc-win32core",
 ]
 
 [[package]]
@@ -1456,6 +1459,14 @@ version = "0.1.0"
 dependencies = [
  "rc-session",
  "rc-types",
+ "rc-win32core",
+]
+
+[[package]]
+name = "rc-d3d11"
+version = "0.1.0"
+dependencies = [
+ "rc-types",
 ]
 
 [[package]]
@@ -1480,9 +1491,11 @@ name = "rc-decode-mf"
 version = "0.1.0"
 dependencies = [
  "rc-capture",
+ "rc-d3d11",
  "rc-decode",
  "rc-encode",
  "rc-types",
+ "rc-win32core",
 ]
 
 [[package]]
@@ -1507,8 +1520,10 @@ name = "rc-encode-mf"
 version = "0.1.0"
 dependencies = [
  "rc-capture",
+ "rc-d3d11",
  "rc-encode",
  "rc-types",
+ "rc-win32core",
 ]
 
 [[package]]
@@ -1524,6 +1539,7 @@ name = "rc-host-win"
 version = "0.1.0"
 dependencies = [
  "rc-types",
+ "rc-win32core",
  "serde",
 ]
 
@@ -1542,6 +1558,7 @@ version = "0.1.0"
 dependencies = [
  "rc-input",
  "rc-types",
+ "rc-win32core",
 ]
 
 [[package]]
@@ -1587,6 +1604,7 @@ dependencies = [
  "rc-capture-win",
  "rc-client-core",
  "rc-clipboard-win",
+ "rc-d3d11",
  "rc-decode",
  "rc-decode-mf",
  "rc-encode",
@@ -1597,6 +1615,7 @@ dependencies = [
  "rc-render",
  "rc-render-win",
  "rc-types",
+ "rc-win32core",
 ]
 
 [[package]]
@@ -1622,6 +1641,7 @@ name = "rc-render-win"
 version = "0.1.0"
 dependencies = [
  "rc-capture",
+ "rc-d3d11",
  "rc-decode",
  "rc-render",
  "rc-types",
@@ -1691,6 +1711,13 @@ dependencies = [
  "serde",
  "windows",
  "winreg",
+]
+
+[[package]]
+name = "rc-win32core"
+version = "0.1.0"
+dependencies = [
+ "rc-types",
 ]
 
 [[package]]

@@ -1,16 +1,19 @@
-//! RabbitControl Windows 音频后端（WASAPI，对应 macOS `rc-audio-macos` / AudioQueue）。
+//! RabbitControl Windows 音频后端（WASAPI）。
 //!
-//! # 设计
+//! # 采集（被控侧）
 //!
-//! - **采集**（被控侧）：WASAPI 环回采集（`AUDCLNT_STREAMFLAGS_LOOPBACK`，
-//!   共享模式 event-driven），重采样到 48 kHz / 16-bit PCM 交 core 的
-//!   IMA-ADPCM 编码；
-//! - **播放**（主控侧）：WASAPI 共享模式低延迟播放，push 模型对齐
-//!   [`rc_audio::AudioPlayer`]。
+//! 默认渲染端点的环回采集：`IMMDeviceEnumerator` 取 eRender/eConsole
+//! 默认设备，`AUDCLNT_STREAMFLAGS_LOOPBACK` + 事件驱动共享模式
+//! 初始化 `IAudioClient`，专用线程泵 `IAudioCaptureClient` 数据包；
+//! 系统混音格式（float32 交错）就地转换为 core 要求的 48 kHz /
+//! 16-bit PCM（必要时先经 `IAudioResampler` MFT 重采样）。
 //!
-//! # 当前状态
+//! # 播放（主控侧）
 //!
-//! 骨架占位：构造均返回未实现错误；[`register`] 已接入 core 提供者槽位。
+//! 共享模式低延迟播放：事件驱动 + 最小缓冲周期，push 模型对齐
+//! core 的 `AudioPlayer`。
+//!
+//! COM 套间初始化统一走 [`rc_win32core::ComApartment`]。
 
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]

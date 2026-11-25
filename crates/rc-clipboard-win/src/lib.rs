@@ -1,15 +1,12 @@
-//! RabbitControl Windows 剪贴板后端（Win32，对应 macOS `rc-clipboard-macos` / Carbon Pasteboard）。
+//! RabbitControl Windows 剪贴板后端。
 //!
-//! # 设计
-//!
-//! - `GetClipboardSequenceNumber` 提供 [`ClipboardBackend::change_count`]
-//!   变更计数（与 macOS `changeCount` 语义一致）；
-//! - 文本读写经 `OpenClipboard` / `CF_UNICODETEXT`；
-//! - 可选 `AddClipboardFormatListener` 事件驱动（替代轮询）。
-//!
-//! # 当前状态
-//!
-//! 骨架占位：读写返回未实现错误；[`register`] 已接入 core 提供者槽位。
+//! - 变更检测：`GetClipboardSequenceNumber` 计数轮询，或
+//!   `AddClipboardFormatListener` + [`rc_win32core::MessageWindow`]
+//!   订阅 `WM_CLIPBOARDUPDATE` 事件驱动；
+//! - 文本读写：`OpenClipboard`/`CF_UNICODETEXT`，写剪贴板时先
+//!   `EmptyClipboard` 再 `SetClipboardData`（`GMEM_MOVEABLE` 全局
+//!   内存句柄所有权移交系统）；
+//! - 回环抑制由 core 剪贴板通道负责，本 crate 只做平台读写。
 
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]

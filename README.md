@@ -1,16 +1,27 @@
 # RabbitControl Windows（`TokenBoom/rabbitcontrol-win`）
 
-RabbitControl Windows 客户端与硬件适配仓库，基于 [`TokenBoom/rabbitcontrol-core`](https://github.com/TokenBoom/rabbitcontrol-core) 构建，包含 Windows 原生低延迟硬件后端、XAML 桌面应用与被控驻留托盘。架构对齐 [`TokenBoom/rabbitcontrol-macos`](https://github.com/TokenBoom/rabbitcontrol-macos)。
+RabbitControl Windows 客户端与硬件适配仓库，基于 [`TokenBoom/rabbitcontrol-core`](https://github.com/TokenBoom/rabbitcontrol-core) 构建：原生低延迟硬件后端、XAML 桌面应用、被控端服务与用户会话代理。
 
-## 仓库结构（11 crates）
+## 架构设计要点
+
+Windows 平台特性决定的三个核心设计：
+
+1. **共享 D3D11 设备（`rc-d3d11`）**：DXGI 采集输出、Media Foundation 编码输入、MF 解码输出、渲染上屏必须在同一个 D3D11 设备上才能零拷贝（D3D11 纹理默认只在创建它的设备上可用）。全进程设备单例 + TDR 统一重建，各后端传递裸纹理指针，避免共享句柄与键控互斥的开销。
+2. **统一 Win32 基础层（`rc-win32core`）**：剪贴板监听、托盘、显示变更、会话锁定在 Windows 上都是窗口消息；WASAPI/MF/WGC 都要求正确的 COM 套间。COM 初始化、隐藏消息窗口与消息泵、MMCSS 线程 QoS、电源请求、QPC 主机时钟集中管理，各后端订阅接入。
+3. **被控端双进程**：Windows 服务运行在 Session 0，摸不到用户桌面。`rc-daemon`（LocalSystem 服务）只管提权操作——UAC/锁屏输入注入代理、显示模式切换、agent 监管；`rc-host-win`（用户会话 agent）是采集/注入/渲染的实际执行者，并提供托盘与连接审批 UI。两者经命名管道通信。
+
+## 仓库结构（14 crates）
 
 | 分层 | Crate | 职责 |
 |---|---|---|
-| Windows 硬件与系统后端 | `rc-capture-win`, `rc-encode-mf`, `rc-decode-mf`, `rc-render-win`, `rc-input-win`, `rc-audio-win`, `rc-clipboard-win` | DXGI Desktop Duplication / WGC 采集、Media Foundation 零拷贝 H.264/HEVC 硬件编解码、D3D11 零拷贝渲染、SendInput 输入注入与低级钩子捕获、WASAPI 环回采集与低延迟播放、Win32 剪贴板 |
-| 被控驻留与平台总成 | `rc-host-win`, `rc-platform-win` | 系统托盘/审批窗，以及将全部 Windows 提供者统一注入 `rabbitcontrol-core` 的注册总入口 |
-| 桌面端与诊断 | `rc-ui`, `rc-cli` | 原生 XAML Islands 桌面端（登录/设备列表/D3D11 桌面视口）、硬件探测与回环压测命令行 |
+| 平台基础 | `rc-win32core`, `rc-d3d11` | COM 套间/消息泵/MMCSS/电源请求/QPC 时钟；共享 D3D11 设备上下文与 TDR 重建 |
+| 硬件后端 | `rc-capture-win`, `rc-encode-mf`, `rc-decode-mf`, `rc-render-win` | DXGI Desktop Duplication / WGC 采集与显示器控制；Media Foundation 零拷贝 H.264/HEVC 硬件编解码；D3D11 渲染 |
+| 系统后端 | `rc-input-win`, `rc-audio-win`, `rc-clipboard-win` | SendInput 注入与低级钩子捕获；WASAPI 环回采集与播放；Win32 剪贴板 |
+| 被控端 | `rc-host-win`, `rc-daemon` | 用户会话代理（托盘/审批/媒体执行）与 LocalSystem 服务（提权代理/进程监管） |
+| 平台总成 | `rc-platform-win` | 将全部后端统一注入 rabbitcontrol-core 的注册入口 |
+| 应用 | `rc-ui`, `rc-cli` | 原生 XAML Islands 桌面端（登录/设备列表/D3D11 桌面视口）；诊断命令行 |
 
-## 平台客户端接入方式
+## 平台接入方式
 
 `rc-platform-win::register_all()` 幂等注册：
 

@@ -16,6 +16,8 @@ rc-input.workspace = true
 rc-audio.workspace = true
 rc-pipeline.workspace = true
 rc-client-core.workspace = true
+rc-win32core = { path = "../rc-win32core" }
+rc-d3d11 = { path = "../rc-d3d11" }
 rc-capture-win = { path = "../rc-capture-win" }
 rc-encode-mf = { path = "../rc-encode-mf" }
 rc-decode-mf = { path = "../rc-decode-mf" }

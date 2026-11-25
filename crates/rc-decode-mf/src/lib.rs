@@ -1,13 +1,15 @@
-//! RabbitControl Windows 硬件视频解码器（Media Foundation，对应 `rabbitcontrol-apple-media` 的 VT 解码）。
+//! RabbitControl Windows 硬件视频解码器（Media Foundation / D3D11VA）。
 //!
 //! # 设计
 //!
-//! - `MFTEnumEx` 枚举 `MFT_CATEGORY_VIDEO_DECODER`（H.264/HEVC 硬解 MFT，
-//!   走 D3D11VA 输出 `ID3D11Texture2D`）；
-//! - 输入 Annex-B 码流（与 `rc-encode-mf` 输出对接）；
-//! - 低延迟：`CODECAPI_AVDecVideoMaxNumRefFrame` 压低参考帧数、
-//!   `MF_LOW_LATENCY` 属性；
-//! - 输出 [`FrameTexture::D3D11`] 交 `rc-render-win` 零拷贝上屏。
+//! - **MFT 选择**：`MFTEnumEx` 枚举 `MFT_CATEGORY_VIDEO_DECODER`，优先
+//!   支持 D3D11VA 的硬件解码 MFT；`MF_SA_D3D11_AWARE` + 共享设备
+//!   [`rc_d3d11::SharedDevice`] 的 `IMFDXGIDeviceManager` 传入，解码输出
+//!   直接落在共享设备的 `ID3D11Texture2D` 上，渲染零拷贝。
+//! - **低延迟**：`MF_LOW_LATENCY` + `CODECAPI_AVDecVideoMaxNumRefFrame`
+//!   压低参考帧；Annex-B 输入与 `rc-encode-mf` 输出对接。
+//! - **错误恢复**：码流损坏/参考缺失时上报 `needs_keyframe`，由会话层
+//!   回源请求 IDR。
 //!
 //! # 当前状态
 //!
@@ -20,7 +22,7 @@ use rc_decode::{DecodeOutput, Decoder};
 use rc_encode::Codec;
 use rc_types::{Error, Resolution, Result, Timestamp};
 
-/// MF 解码器配置（对应 `VtDecoderConfig`）。
+/// MF 解码器配置。
 #[derive(Debug, Clone, Copy)]
 pub struct MfDecoderConfig {
     /// 码流编解码器。
@@ -49,8 +51,9 @@ pub struct MfDecoder {
 impl MfDecoder {
     /// 构造解码器。
     pub fn new(cfg: MfDecoderConfig) -> Result<Self> {
-        // TODO: MFStartup → MFTEnumEx 选硬解 MFT → 设置输入（ Annex-B ）/
-        // 输出（NV12/D3D11）媒体类型 → 启用 D3D11 感知。
+        // TODO: MFStartup → MFTEnumEx 选 D3D11VA 硬解 MFT →
+        // IMFDXGIDeviceManager 绑定 rc_d3d11::SharedDevice →
+        // 输入 Annex-B / 输出 NV12-on-D3D11 媒体类型。
         Ok(Self {
             cfg,
             waiting_keyframe: true,
@@ -58,7 +61,7 @@ impl MfDecoder {
     }
 }
 
-/// 构造解码器（对应 macOS `new_decoder` 自由函数）。
+/// 构造解码器。
 pub fn new_decoder(cfg: MfDecoderConfig) -> Result<MfDecoder> {
     MfDecoder::new(cfg)
 }
@@ -70,7 +73,7 @@ impl Decoder for MfDecoder {
         _kind: rc_types::FrameKind,
         _deadline_ts: Timestamp,
     ) -> Result<DecodeOutput> {
-        // TODO: ProcessInput → ProcessOutput 循环，输出 D3D11 纹理帧。
+        // TODO: ProcessInput → ProcessOutput 循环，输出共享设备纹理帧。
         Err(Error::InvalidConfig(
             "mf decoder not yet implemented".into(),
         ))

@@ -1,6 +1,6 @@
 [package]
 name = "rc-capture-win"
-description = "RabbitControl Windows screen capture backend (DXGI Desktop Duplication / Windows Graphics Capture)"
+description = "RabbitControl Windows screen capture (DXGI Desktop Duplication / Windows Graphics Capture) and display control"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,3 +9,5 @@ license.workspace = true
 [dependencies]
 rc-capture.workspace = true
 rc-types.workspace = true
+rc-d3d11 = { path = "../rc-d3d11" }
+rc-win32core = { path = "../rc-win32core" }
