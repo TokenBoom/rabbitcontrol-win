@@ -1,19 +1,81 @@
-[package]
-name = "rabbitcontrol-win"
+[workspace]
+resolver = "2"
+members = [
+    "crates/rc-capture-win",
+    "crates/rc-encode-mf",
+    "crates/rc-decode-mf",
+    "crates/rc-render-win",
+    "crates/rc-input-win",
+    "crates/rc-audio-win",
+    "crates/rc-clipboard-win",
+    "crates/rc-host-win",
+    "crates/rc-platform-win",
+    "crates/rc-cli",
+    "crates/rc-daemon",
+    "crates/rc-ui",
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
-publish = false
+rust-version = "1.75"
+license = "AGPL-3.0-only"
 
-[dependencies]
-ironrdp-displaycontrol = "0.5"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "native-tls"] }
-serde = { version = "1", features = ["derive"] }
-winreg = "0.55"
-# 0.37 is the last windows-rs release with the inbox Windows.UI.Xaml projections.
-windows = { version = "0.37", features = [
-    "alloc", "Foundation", "System", "UI_Xaml_Controls_Primitives", "UI_Xaml_Hosting", "UI_Xaml_Markup", "UI_Xaml_Input",
-    "Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11",
-    "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader",
-    "Win32_System_WinRT_Xaml", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse",
-    "UI_Input", "UI_Xaml_Automation",
+[workspace.dependencies]
+rc-types = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.14" }
+rc-diff = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.14" }
+rc-sched = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.14" }
+rc-fec = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.14" }
+rc-proto = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.14" }
+rc-trace = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.14" }
+rc-loopback = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.14" }
+rc-capture = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.14" }
+rc-encode = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.14" }
+rc-decode = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.14" }
+rc-render = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.14" }
+rc-input = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.14" }
+rc-audio = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.14" }
+rc-pipeline = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.14" }
+rc-net = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.14" }
+rc-session = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.14" }
+rc-tools = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.14" }
+rc-client-core = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.14" }
+
+# rc-ui 的 XAML Island 依赖 windows-rs 0.37（最后一个内置 Windows.UI.Xaml 投影的版本），
+# 在其 crate 清单中单独声明；后端 crate 使用最新 windows-rs（WGC / Media Foundation / WASAPI 投影）。
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Media_MediaFoundation",
+    "Win32_Media_Audio",
+    "Win32_System_Com",
+    "Win32_System_Performance",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_SystemServices",
+    "Win32_Security",
 ] }
+
+serde = { version = "1", features = ["derive"] }
+
+[profile.dev]
+opt-level = 0
+debug = 1
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.test]
+opt-level = 0
+debug = 1
+
+[profile.dev-debug]
+inherits = "dev"
+debug = 2
+
+[profile.bench]
+inherits = "release"

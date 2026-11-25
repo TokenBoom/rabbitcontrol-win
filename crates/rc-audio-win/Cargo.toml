@@ -1,0 +1,11 @@
+[package]
+name = "rc-audio-win"
+description = "RabbitControl Windows audio backend (WASAPI loopback capture and playback)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+rc-audio.workspace = true
+rc-types.workspace = true

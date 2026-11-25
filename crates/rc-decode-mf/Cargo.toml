@@ -1,0 +1,13 @@
+[package]
+name = "rc-decode-mf"
+description = "RabbitControl Windows hardware video decoder (Media Foundation)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+rc-capture.workspace = true
+rc-decode.workspace = true
+rc-encode.workspace = true
+rc-types.workspace = true

@@ -1,0 +1,11 @@
+[package]
+name = "rc-capture-win"
+description = "RabbitControl Windows screen capture backend (DXGI Desktop Duplication / Windows Graphics Capture)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+rc-capture.workspace = true
+rc-types.workspace = true

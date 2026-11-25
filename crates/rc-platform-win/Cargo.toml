@@ -1,0 +1,25 @@
+[package]
+name = "rc-platform-win"
+description = "RabbitControl Windows platform assembly: registers all native backends with rabbitcontrol-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+rc-types.workspace = true
+rc-capture.workspace = true
+rc-encode.workspace = true
+rc-decode.workspace = true
+rc-render.workspace = true
+rc-input.workspace = true
+rc-audio.workspace = true
+rc-pipeline.workspace = true
+rc-client-core.workspace = true
+rc-capture-win = { path = "../rc-capture-win" }
+rc-encode-mf = { path = "../rc-encode-mf" }
+rc-decode-mf = { path = "../rc-decode-mf" }
+rc-render-win = { path = "../rc-render-win" }
+rc-input-win = { path = "../rc-input-win" }
+rc-audio-win = { path = "../rc-audio-win" }
+rc-clipboard-win = { path = "../rc-clipboard-win" }

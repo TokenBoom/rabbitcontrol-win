@@ -1,0 +1,11 @@
+[package]
+name = "rc-clipboard-win"
+description = "RabbitControl Windows clipboard backend (Win32 clipboard)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+rc-session.workspace = true
+rc-types.workspace = true

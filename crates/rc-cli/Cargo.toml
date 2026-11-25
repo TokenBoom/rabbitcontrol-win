@@ -1,0 +1,16 @@
+[package]
+name = "rc-cli"
+description = "RabbitControl Windows diagnostic CLI"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "rc-cli"
+path = "src/main.rs"
+
+[dependencies]
+rc-platform-win = { path = "../rc-platform-win" }
+rc-types.workspace = true
+clap = { version = "4", features = ["derive"] }

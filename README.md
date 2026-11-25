@@ -1,16 +1,71 @@
-# RabbitControl for Windows
+# RabbitControl Windows（`TokenBoom/rabbitcontrol-win`）
 
-Rust 原生 Windows 客户端。启动后显示 RabbitControl 邮箱登录页。透明标题区域与页面共享背景，可拖动窗口、双击切换最大化，也可使用右上角的窗口按钮。
+RabbitControl Windows 客户端与硬件适配仓库，基于 [`TokenBoom/rabbitcontrol-core`](https://github.com/TokenBoom/rabbitcontrol-core) 构建，包含 Windows 原生低延迟硬件后端、XAML 桌面应用与被控驻留托盘。架构对齐 [`TokenBoom/rabbitcontrol-macos`](https://github.com/TokenBoom/rabbitcontrol-macos)。
 
-## 运行
+## 仓库结构（11 crates）
 
-在 Windows 10 1903 或更高版本的桌面环境中安装 Rust stable（MSVC）及 Visual Studio 2022 Build Tools 的「使用 C++ 的桌面开发」工作负载，包含 MSVC x64 工具链和 Windows SDK。
+| 分层 | Crate | 职责 |
+|---|---|---|
+| Windows 硬件与系统后端 | `rc-capture-win`, `rc-encode-mf`, `rc-decode-mf`, `rc-render-win`, `rc-input-win`, `rc-audio-win`, `rc-clipboard-win` | DXGI Desktop Duplication / WGC 采集、Media Foundation 零拷贝 H.264/HEVC 硬件编解码、D3D11 零拷贝渲染、SendInput 输入注入与低级钩子捕获、WASAPI 环回采集与低延迟播放、Win32 剪贴板 |
+| 被控驻留与平台总成 | `rc-host-win`, `rc-platform-win` | 系统托盘/审批窗，以及将全部 Windows 提供者统一注入 `rabbitcontrol-core` 的注册总入口 |
+| 桌面端与诊断 | `rc-ui`, `rc-cli` | 原生 XAML Islands 桌面端（登录/设备列表/D3D11 桌面视口）、硬件探测与回环压测命令行 |
+
+## 平台客户端接入方式
+
+`rc-platform-win::register_all()` 幂等注册：
+
+1. `rc_pipeline::register_platform_provider(...)` — DXGI 采集 / MF 编解码 / D3D11 渲染与主机单调时钟
+2. `rc_audio::register_audio_provider(...)` — WASAPI 环回采集与播放
+3. `rc_session::register_clipboard_provider(...)` — Win32 剪贴板
+4. `rc_client_core::platform::register_platform_hooks(...)` — 显示器查询、分辨率切换、锁屏、输入注入与渲染表面挂接
+
+## 本地联合调试 `rabbitcontrol-core`
+
+默认 `Cargo.toml` 从 GitHub `TokenBoom/rabbitcontrol-core` 拉取 `tag = "v0.1.14"`。若本地同时修改了相邻的 `../rabbitcontrol-core`，在本地未跟踪的 `.cargo/config.toml` 中加入：
+
+```toml
+[patch."https://github.com/TokenBoom/rabbitcontrol-core.git"]
+rc-types = { path = "../rabbitcontrol-core/crates/rc-types" }
+rc-diff = { path = "../rabbitcontrol-core/crates/rc-diff" }
+rc-sched = { path = "../rabbitcontrol-core/crates/rc-sched" }
+rc-fec = { path = "../rabbitcontrol-core/crates/rc-fec" }
+rc-proto = { path = "../rabbitcontrol-core/crates/rc-proto" }
+rc-trace = { path = "../rabbitcontrol-core/crates/rc-trace" }
+rc-loopback = { path = "../rabbitcontrol-core/crates/rc-loopback" }
+rc-capture = { path = "../rabbitcontrol-core/crates/rc-capture" }
+rc-encode = { path = "../rabbitcontrol-core/crates/rc-encode" }
+rc-decode = { path = "../rabbitcontrol-core/crates/rc-decode" }
+rc-render = { path = "../rabbitcontrol-core/crates/rc-render" }
+rc-input = { path = "../rabbitcontrol-core/crates/rc-input" }
+rc-audio = { path = "../rabbitcontrol-core/crates/rc-audio" }
+rc-pipeline = { path = "../rabbitcontrol-core/crates/rc-pipeline" }
+rc-net = { path = "../rabbitcontrol-core/crates/rc-net" }
+rc-session = { path = "../rabbitcontrol-core/crates/rc-session" }
+rc-tools = { path = "../rabbitcontrol-core/crates/rc-tools" }
+rc-client-core = { path = "../rabbitcontrol-core/crates/rc-client-core" }
+```
+
+## 构建与验证
+
+环境：Windows 10 1903+，Rust stable（MSVC），Visual Studio 2022 Build Tools 的「使用 C++ 的桌面开发」工作负载（MSVC x64 工具链 + Windows SDK）。
 
 ```powershell
-cargo run --locked
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace -- --test-threads=1
+
+# 运行桌面端
+cargo run -p rc-ui
+
+# 诊断命令行
+cargo run -p rc-cli -- probe
 ```
 
 发布构建使用 `cargo build --locked --release`，可执行文件位于 `target/release/rabbitcontrol-win.exe`。
+
+## 当前状态
+
+骨架阶段：全部 crate 接口已与 core 契约对齐并编译通过，硬件后端（DXGI/MF/D3D11/WASAPI/SendInput）为占位实现，后续逐个落地。
 
 ## 登录与服务器设置
 
@@ -18,7 +73,7 @@ cargo run --locked
 
 使用该服务器的账号邮箱和密码登录。客户端在后台请求 `POST /api/v1/auth/login`，令牌仅保存在进程内存中。登录成功后显示账号和 1280 × 720 的待连接桌面。选择「退出登录」会调用 `POST /api/v1/auth/logout` 并回到登录页。
 
-## 结构
+## rc-ui 结构
 
 - `src/shell.rs` 用 windows-rs 封装 Win32 窗口、STA 消息循环和系统 XAML Island 的生命周期。
 - `src/view.xaml` 定义主界面和桌面视口，编译时嵌入可执行文件。

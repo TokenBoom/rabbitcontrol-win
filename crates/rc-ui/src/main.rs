@@ -14,6 +14,7 @@ use windows::Win32::{
 };
 
 fn run() -> Result<(), Box<dyn Error>> {
+    rc_platform_win::register_all();
     let shell = shell::Shell::new()?;
     let mut app = app::App::new(&shell)?;
     shell.show_and_run(|| app.dispatch())?;
