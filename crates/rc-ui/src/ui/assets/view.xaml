@@ -6,16 +6,16 @@
     <RowDefinition Height="*"/>
   </Grid.RowDefinitions>
 
-  <!-- ===== 自绘标题栏（固定窗口：仅最小化/关闭） ===== -->
+  <!-- ===== 自绘标题栏（固定窗口：仅最小化/关闭；登录浮层覆盖时隐藏） ===== -->
   <Grid>
     <Border x:Name="DragRegion" Background="Transparent"/>
     <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0" Spacing="8" IsHitTestVisible="False">
-      <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE968;" FontSize="14" Foreground="{ThemeResource PrimaryBrush}"/>
+      <Image x:Name="TitleLogo" Width="18" Height="18" Stretch="Uniform"/>
       <TextBlock x:Name="AppTitle" Text="RabbitControl" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextSecondaryBrush}"/>
     </StackPanel>
     <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
-      <Button x:Name="Minimize" AutomationProperties.Name="最小化" Content="&#xE921;" Style="{StaticResource CaptionButton}" Width="48" Height="48"/>
-      <Button x:Name="CloseWindow" AutomationProperties.Name="关闭" Content="&#xE8BB;" Style="{StaticResource CaptionButton}" Width="48" Height="48"/>
+      <Button x:Name="Minimize" AutomationProperties.Name="最小化" Content="&#xE921;" Style="{StaticResource CaptionButton}"/>
+      <Button x:Name="CloseWindow" AutomationProperties.Name="关闭" Content="&#xE8BB;" Style="{StaticResource CaptionCloseButton}"/>
     </StackPanel>
   </Grid>
 
@@ -410,82 +410,73 @@
             <ProgressRing x:Name="SessionSpinner" IsActive="True" Width="42" Height="42"/>
             <TextBlock x:Name="SessionOverlayText" Text="" Foreground="#C5D4E8" FontSize="15" HorizontalAlignment="Center"/>
           </StackPanel>
-          <Border VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="10" Background="#CC141D27" CornerRadius="6" Padding="10,6" IsHitTestVisible="False">
-            <TextBlock x:Name="SessionHud" Text="" FontFamily="Consolas" FontSize="12" Foreground="#9FE0B3"/>
+          <Border x:Name="SessionHudPanel" VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="10" Background="#CC141D27" CornerRadius="6" Padding="10,6" IsHitTestVisible="False" Visibility="Collapsed">
+            <TextBlock x:Name="SessionHud" Text="" FontFamily="Consolas" FontSize="12" Foreground="#9FE0B3" LineHeight="18"/>
           </Border>
         </Grid>
       </Grid>
     </Grid>
   </Grid>
 
-  <!-- ===== 登录浮层（未登录时覆盖全窗口） ===== -->
-  <Grid x:Name="LoginOverlay" Grid.Row="1" Visibility="Visible">
+  <!-- ===== 登录浮层（未登录时覆盖全窗口，含标题栏区域） ===== -->
+  <Grid x:Name="LoginOverlay" Grid.Row="0" Grid.RowSpan="2" Visibility="Visible">
     <Grid.Background>
       <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
         <GradientStop Color="#EAF4FF" Offset="0"/>
         <GradientStop Color="#F5F0FF" Offset="1"/>
       </LinearGradientBrush>
     </Grid.Background>
-    <Grid>
-      <ScrollViewer x:Name="LoginView" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" MaxWidth="380" VerticalAlignment="Center" HorizontalContentAlignment="Stretch">
-        <StackPanel Margin="20,20">
-          <!-- 品牌 logo 区域 -->
-          <StackPanel HorizontalAlignment="Center" Spacing="0" Margin="0,0,0,32">
-            <Grid Width="56" Height="56" HorizontalAlignment="Center" Margin="0,0,0,12">
-              <Border CornerRadius="14" Background="{ThemeResource PrimaryBrush}">
-                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                  <Ellipse Width="16" Height="12" Fill="White" Margin="0,4,0,0"/>
-                  <Ellipse Width="8" Height="10" Fill="White" Margin="0,-2,0,0" HorizontalAlignment="Center"/>
-                </StackPanel>
-              </Border>
-            </Grid>
-            <TextBlock Text="RabbitControl" FontSize="24" FontWeight="Bold" Foreground="{ThemeResource TextPrimaryBrush}" HorizontalAlignment="Center"/>
-            <TextBlock Text="远程桌面 · 账号登录" HorizontalAlignment="Center" Foreground="{ThemeResource TextTertiaryBrush}" FontSize="13" Margin="0,6,0,0"/>
-          </StackPanel>
-          <!-- 表单卡片 -->
-          <Border Background="White" CornerRadius="14" Padding="20,22" BorderBrush="#E8E8F0" BorderThickness="1">
-            <StackPanel Spacing="0">
-              <TextBlock Text="账号邮箱" Style="{StaticResource FieldLabel}"/>
-              <TextBox x:Name="Email" AutomationProperties.Name="账号邮箱" PlaceholderText="请输入邮箱地址"
+    <!-- 登录态无标题栏：顶部留一条可拖动区 -->
+    <Border x:Name="LoginDragRegion" Height="40" VerticalAlignment="Top" Background="Transparent"/>
+    <!-- 登录视图：定宽居中（窗口恒 1000×660 逻辑尺寸，内容必容纳，无需滚动） -->
+    <StackPanel x:Name="LoginView" Width="360" HorizontalAlignment="Center" VerticalAlignment="Center">
+      <!-- 品牌 logo 区域 -->
+      <StackPanel HorizontalAlignment="Center" Margin="0,0,0,24">
+        <Image x:Name="BrandLogo" Width="64" Height="64" HorizontalAlignment="Center" Margin="0,0,0,12"/>
+        <TextBlock Text="RabbitControl" FontSize="24" FontWeight="Bold" Foreground="{ThemeResource TextPrimaryBrush}" HorizontalAlignment="Center"/>
+        <TextBlock Text="远程桌面 · 账号登录" HorizontalAlignment="Center" Foreground="{ThemeResource TextTertiaryBrush}" FontSize="13" Margin="0,6,0,0"/>
+      </StackPanel>
+      <!-- 表单卡片 -->
+      <Border Background="White" CornerRadius="14" Padding="20,22" BorderBrush="#E8E8F0" BorderThickness="1">
+        <StackPanel Spacing="0">
+          <TextBlock Text="账号邮箱" Style="{StaticResource FieldLabel}"/>
+          <TextBox x:Name="Email" AutomationProperties.Name="账号邮箱" PlaceholderText="请输入邮箱地址"
+                   Background="#F8F9FB" BorderBrush="Transparent" CornerRadius="8"
+                   Padding="12,10" Margin="0,6,0,14" FontSize="14" InputScope="EmailSmtpAddress"/>
+          <TextBlock Text="密码" Style="{StaticResource FieldLabel}"/>
+          <PasswordBox x:Name="Password" AutomationProperties.Name="密码" PlaceholderText="请输入密码"
                        Background="#F8F9FB" BorderBrush="Transparent" CornerRadius="8"
-                       Padding="12,10" Margin="0,6,0,14" FontSize="14" InputScope="EmailSmtpAddress"/>
-              <TextBlock Text="密码" Style="{StaticResource FieldLabel}"/>
-              <PasswordBox x:Name="Password" AutomationProperties.Name="密码" PlaceholderText="请输入密码"
-                           Background="#F8F9FB" BorderBrush="Transparent" CornerRadius="8"
-                           Padding="12,10" Margin="0,6,0,0" FontSize="14"/>
-              <TextBlock x:Name="LoginError" Foreground="{ThemeResource DangerBrush}" TextWrapping="Wrap" FontSize="12" Margin="0,8,0,0"/>
-              <Button x:Name="SignIn" Content="登录" Style="{StaticResource PrimaryButton}" Height="42" Margin="0,16,0,0"
-                      HorizontalAlignment="Stretch"/>
-            </StackPanel>
-          </Border>
-          <!-- 底部服务器信息 -->
-          <Grid Margin="0,14,0,0">
-            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-              <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE968;" FontSize="13" Foreground="{ThemeResource TextTertiaryBrush}"/>
-              <TextBlock x:Name="ServerCaption" MaxWidth="220" TextTrimming="CharacterEllipsis" FontSize="12" Foreground="{ThemeResource TextTertiaryBrush}"/>
-            </StackPanel>
-            <Button x:Name="ServerLink" HorizontalAlignment="Right" Content="服务器设置" Style="{StaticResource LinkButton}"/>
-          </Grid>
+                       Padding="12,10" Margin="0,6,0,0" FontSize="14"/>
+          <TextBlock x:Name="LoginError" Foreground="{ThemeResource DangerBrush}" TextWrapping="Wrap" FontSize="12" Margin="0,8,0,0"/>
+          <Button x:Name="SignIn" Content="登录" Style="{StaticResource PrimaryButton}" Height="42" Margin="0,16,0,0"
+                  HorizontalAlignment="Stretch"/>
         </StackPanel>
-      </ScrollViewer>
+      </Border>
+      <!-- 底部服务器信息 -->
+      <Grid Margin="0,14,0,0">
+        <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+          <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE968;" FontSize="13" Foreground="{ThemeResource TextTertiaryBrush}"/>
+          <TextBlock x:Name="ServerCaption" MaxWidth="220" TextTrimming="CharacterEllipsis" FontSize="12" Foreground="{ThemeResource TextTertiaryBrush}"/>
+        </StackPanel>
+        <Button x:Name="ServerLink" HorizontalAlignment="Right" Content="服务器设置" Style="{StaticResource LinkButton}"/>
+      </Grid>
+    </StackPanel>
 
-      <ScrollViewer x:Name="ServerSettingsView" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" MaxWidth="380" VerticalAlignment="Center" HorizontalContentAlignment="Stretch">
-        <StackPanel Margin="20,20">
-          <Button x:Name="BackToLogin" Content="‹  返回登录" Style="{StaticResource LinkButton}" Margin="-8,0,0,18"/>
-          <Border Background="White" CornerRadius="14" Padding="20,22" BorderBrush="#E8E8F0" BorderThickness="1">
-            <StackPanel Spacing="0">
-              <TextBlock Text="服务器设置" Style="{StaticResource SubtitleText}"/>
-              <TextBlock Text="连接时将自动探测服务器并校验 Root CA 证书。" FontSize="13" Foreground="{ThemeResource TextTertiaryBrush}" Margin="0,8,0,20" TextWrapping="Wrap"/>
-              <TextBlock Text="服务器地址" Style="{StaticResource FieldLabel}"/>
-              <TextBox x:Name="Origin" AutomationProperties.Name="服务器地址" PlaceholderText="https://主机:端口" FontSize="14"
-                       Background="#F8F9FB" BorderBrush="Transparent" CornerRadius="8" Padding="12,10" Margin="0,6,0,6"/>
-              <TextBlock Text="仅填主机名时使用 HTTPS 和端口 21118，也可输入完整地址。本机调试支持 HTTP。" FontSize="12" Foreground="{ThemeResource TextTertiaryBrush}" TextWrapping="Wrap"/>
-              <TextBlock x:Name="SettingsError" Foreground="{ThemeResource DangerBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
-              <Button x:Name="SaveServer" Content="保存地址" Style="{StaticResource PrimaryButton}" Height="42" Margin="0,16,0,0"/>
-            </StackPanel>
-          </Border>
+    <!-- 服务器设置视图 -->
+    <StackPanel x:Name="ServerSettingsView" Visibility="Collapsed" Width="360" HorizontalAlignment="Center" VerticalAlignment="Center">
+      <Button x:Name="BackToLogin" Content="‹  返回登录" Style="{StaticResource LinkButton}" Margin="-8,0,0,18"/>
+      <Border Background="White" CornerRadius="14" Padding="20,22" BorderBrush="#E8E8F0" BorderThickness="1">
+        <StackPanel Spacing="0">
+          <TextBlock Text="服务器设置" Style="{StaticResource SubtitleText}"/>
+          <TextBlock Text="连接时将自动探测服务器并校验 Root CA 证书。" FontSize="13" Foreground="{ThemeResource TextTertiaryBrush}" Margin="0,8,0,20" TextWrapping="Wrap"/>
+          <TextBlock Text="服务器地址" Style="{StaticResource FieldLabel}"/>
+          <TextBox x:Name="Origin" AutomationProperties.Name="服务器地址" PlaceholderText="https://主机:端口" FontSize="14"
+                   Background="#F8F9FB" BorderBrush="Transparent" CornerRadius="8" Padding="12,10" Margin="0,6,0,6"/>
+          <TextBlock Text="仅填主机名时使用 HTTPS 和端口 21118，也可输入完整地址。本机调试支持 HTTP。" FontSize="12" Foreground="{ThemeResource TextTertiaryBrush}" TextWrapping="Wrap"/>
+          <TextBlock x:Name="SettingsError" Foreground="{ThemeResource DangerBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+          <Button x:Name="SaveServer" Content="保存地址" Style="{StaticResource PrimaryButton}" Height="42" Margin="0,16,0,0"/>
         </StackPanel>
-      </ScrollViewer>
-    </Grid>
+      </Border>
+    </StackPanel>
   </Grid>
 </Grid>

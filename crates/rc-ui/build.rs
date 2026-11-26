@@ -9,6 +9,7 @@ fn main() {
     let icon = manifest_dir.join("app.ico");
     println!("cargo:rerun-if-changed=app.manifest");
     println!("cargo:rerun-if-changed=app.ico");
+    println!("cargo:rerun-if-changed=app.rc");
     println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_ENV");
 
     match env::var("CARGO_CFG_TARGET_ENV").as_deref() {
@@ -23,6 +24,8 @@ fn main() {
                 "cargo:rustc-link-arg-bins=/MANIFESTINPUT:{}",
                 manifest.display()
             );
+            // exe 资源（图标，资源 ID 1）：任务栏/资源管理器/alt-tab 图标来源。
+            embed_resource::compile("app.rc", embed_resource::NONE);
         }
         Ok("gnu") => {
             // GNU 链接器不接受 MSVC 清单参数，通过 windres 编译图标与清单资源嵌入二进制。

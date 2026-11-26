@@ -1,0 +1,2 @@
+// exe 资源：ID 1 = 图标（shell.rs LoadImageW 按资源 ID 加载）。
+1 ICON "app.ico"

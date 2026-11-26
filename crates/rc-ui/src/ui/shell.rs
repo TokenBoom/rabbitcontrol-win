@@ -151,7 +151,25 @@ struct DragState {
 
 // 使用指针捕获与屏幕坐标直移替代系统模态移动循环，避免与 XAML Island 消息泵冲突导致卡顿或失效。
 fn attach_caption(root: &FrameworkElement, hwnd: HWND) -> Result<()> {
-    let drag: UIElement = root.FindName("DragRegion")?.cast()?;
+    // 登录浮层覆盖标题栏时，顶部 40px 拖动条接管拖动。
+    for name in ["DragRegion", "LoginDragRegion"] {
+        bind_drag_region(root, name, hwnd)?;
+    }
+
+    for (name, command) in [("Minimize", SC_MINIMIZE), ("CloseWindow", SC_CLOSE)] {
+        let button: ButtonBase = root.FindName(name)?.cast()?;
+        button.Click(windows::UI::Xaml::RoutedEventHandler::new(move |_, _| {
+            unsafe {
+                PostMessageW(hwnd, WM_SYSCOMMAND, WPARAM(command as usize), None);
+            }
+            Ok(())
+        }))?;
+    }
+    Ok(())
+}
+
+fn bind_drag_region(root: &FrameworkElement, name: &str, hwnd: HWND) -> Result<()> {
+    let drag: UIElement = root.FindName(name)?.cast()?;
     let drag_state: Arc<std::sync::Mutex<Option<DragState>>> =
         Arc::new(std::sync::Mutex::new(None));
 
@@ -237,16 +255,6 @@ fn attach_caption(root: &FrameworkElement, hwnd: HWND) -> Result<()> {
         *lost_state.lock().unwrap() = None;
         Ok(())
     }))?;
-
-    for (name, command) in [("Minimize", SC_MINIMIZE), ("CloseWindow", SC_CLOSE)] {
-        let button: ButtonBase = root.FindName(name)?.cast()?;
-        button.Click(windows::UI::Xaml::RoutedEventHandler::new(move |_, _| {
-            unsafe {
-                PostMessageW(hwnd, WM_SYSCOMMAND, WPARAM(command as usize), None);
-            }
-            Ok(())
-        }))?;
-    }
     Ok(())
 }
 
@@ -287,19 +295,50 @@ impl Window {
             if hwnd.0 == 0 {
                 return Err(Error::from_win32());
             }
-            // DWM 阴影（WS_POPUP 窗口需要 ExtendFrame 激活系统阴影）。
-            // DWM 阴影 + 圆角（调试中：临时注释以定位启动崩溃）
-            // let margins = windows::Win32::UI::Controls::MARGINS {
-            //     cxLeftWidth: 0, cxRightWidth: 0, cyTopHeight: 0, cyBottomHeight: 1,
-            // };
-            // let _ = windows::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea(hwnd, &margins);
-            // let pref = windows::Win32::Graphics::Dwm::DWM_WINDOW_CORNER_PREFERENCE(2);
-            // let _ = windows::Win32::Graphics::Dwm::DwmSetWindowAttribute(
-            //     hwnd,
-            //     windows::Win32::Graphics::Dwm::DWMWA_WINDOW_CORNER_PREFERENCE,
-            //     &pref as *const _ as *const core::ffi::c_void,
-            //     4,
-            // );
+            // 窗口/任务栏图标：build.rs 嵌入的 exe 资源（ID 1）。
+            if let Ok(big) = LoadImageW(
+                instance,
+                PCWSTR(1 as _),
+                IMAGE_ICON,
+                GetSystemMetrics(SM_CXICON),
+                GetSystemMetrics(SM_CYICON),
+                LR_DEFAULTSIZE | LR_SHARED,
+            ) {
+                SendMessageW(hwnd, WM_SETICON, WPARAM(ICON_BIG as usize), LPARAM(big.0));
+            }
+            if let Ok(small) = LoadImageW(
+                instance,
+                PCWSTR(1 as _),
+                IMAGE_ICON,
+                GetSystemMetrics(SM_CXSMICON),
+                GetSystemMetrics(SM_CYSMICON),
+                LR_DEFAULTSIZE | LR_SHARED,
+            ) {
+                SendMessageW(
+                    hwnd,
+                    WM_SETICON,
+                    WPARAM(ICON_SMALL as usize),
+                    LPARAM(small.0),
+                );
+            }
+            // DWM 阴影（WS_POPUP 窗口需要 ExtendFrame 激活）+ Win11 圆角。
+            let margins = windows::Win32::UI::Controls::MARGINS {
+                cxLeftWidth: 0,
+                cxRightWidth: 0,
+                cyTopHeight: 0,
+                cyBottomHeight: 1,
+            };
+            let _ = windows::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea(hwnd, &margins);
+            let pref = windows::Win32::Graphics::Dwm::DWM_WINDOW_CORNER_PREFERENCE(
+                windows::Win32::Graphics::Dwm::DWMWCP_ROUND.0,
+            );
+            let _ = windows::Win32::Graphics::Dwm::DwmSetWindowAttribute(
+                hwnd,
+                windows::Win32::Graphics::Dwm::DWMWA_WINDOW_CORNER_PREFERENCE,
+                &pref as *const _ as *const core::ffi::c_void,
+                std::mem::size_of::<windows::Win32::Graphics::Dwm::DWM_WINDOW_CORNER_PREFERENCE>()
+                    as u32,
+            );
             Ok(Self(hwnd))
         }
     }

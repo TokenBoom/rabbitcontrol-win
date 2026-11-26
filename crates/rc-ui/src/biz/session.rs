@@ -169,6 +169,29 @@ pub fn view_state_of(update: &SessionUpdate, current: &SessionView) -> SessionVi
     }
 }
 
+/// HUD 快照 → 两行等宽文本（纯函数可单测；core 契约：UI 只格式化）。
+///
+/// 形如：
+/// `00:11:05 · UDP LAN · 1920×1080`
+/// `60.0 fps · 14.2 Mbps · RTT 4.5 ms · 帧 12.3 ms · 丢包 0.1%`
+pub fn format_hud(s: &rc_client_core::hud::HudSnapshot) -> String {
+    let rate = if s.bitrate_kbps >= 1000.0 {
+        format!("{:.1} Mbps", s.bitrate_kbps / 1000.0)
+    } else {
+        format!("{:.0} kbps", s.bitrate_kbps)
+    };
+    let rtt = s
+        .rtt_ms
+        .map_or_else(|| "—".into(), |v| format!("{v:.1} ms"));
+    let frame = s
+        .frame_ms
+        .map_or_else(|| "—".into(), |v| format!("{v:.1} ms"));
+    format!(
+        "{} · {} · {}\n{:.1} fps · {} · RTT {} · 帧 {} · 丢包 {:.1}%",
+        s.elapsed, s.transport, s.resolution, s.fps, rate, rtt, frame, s.loss_pct
+    )
+}
+
 /// 连接阶段中文文案。
 pub fn connect_phase_text(phase: &rc_client_core::session_bridge::ConnectPhase) -> String {
     use rc_client_core::session_bridge::ConnectPhase as P;
@@ -260,6 +283,39 @@ mod tests {
             view_state_of(&ended, &current),
             SessionView::Ended("对端断开".to_string())
         );
+    }
+
+    #[test]
+    fn hud_formats_two_lines() {
+        use rc_client_core::hud::HudSnapshot;
+        let s = HudSnapshot {
+            elapsed: "00:11:05".into(),
+            transport: "UDP LAN",
+            fps: 60.0,
+            bitrate_kbps: 14_200.0,
+            rtt_ms: Some(4.5),
+            frame_ms: Some(12.34),
+            loss_pct: 0.12,
+            resolution: "1920x1080".into(),
+        };
+        let text = format_hud(&s);
+        let (l1, l2) = text.split_once('\n').expect("两行");
+        assert_eq!(l1, "00:11:05 · UDP LAN · 1920x1080");
+        assert_eq!(
+            l2,
+            "60.0 fps · 14.2 Mbps · RTT 4.5 ms · 帧 12.3 ms · 丢包 0.1%"
+        );
+        // 低码率走 kbps；无样本字段显示占位符
+        let empty = HudSnapshot {
+            bitrate_kbps: 850.0,
+            rtt_ms: None,
+            frame_ms: None,
+            ..s
+        };
+        let text2 = format_hud(&empty);
+        assert!(text2.contains("850 kbps"), "{text2}");
+        assert!(text2.contains("RTT —"), "{text2}");
+        assert!(text2.contains("帧 —"), "{text2}");
     }
 
     #[test]

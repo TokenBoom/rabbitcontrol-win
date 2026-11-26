@@ -77,6 +77,7 @@ pub struct App {
     tick: u64,
     session: Option<ActiveSession>,
     session_view: SessionView,
+    session_hud: Option<rc_client_core::hud::HudSnapshot>,
     peer_watch_only: bool,
     pressed_keys: Vec<u16>,
     pressed_buttons: Vec<u8>,
@@ -129,6 +130,7 @@ impl App {
             tick: 0,
             session: None,
             session_view: SessionView::Idle,
+            session_hud: None,
             peer_watch_only: false,
             pressed_keys: Vec::new(),
             pressed_buttons: Vec::new(),
@@ -140,6 +142,7 @@ impl App {
             e
         })?;
         eprintln!("[App::new] wire OK");
+        app.apply_brand();
         app.update_caption()?;
         app.apply_scale()?;
         if app.auth.has_saved_session() {
@@ -580,6 +583,7 @@ impl App {
                                 target_id,
                             });
                             self.session_view = SessionView::Idle;
+                            self.session_hud = None;
                             self.page = Page::Session;
                             self.show_page(Page::Session)?;
                             self.apply_session_view();
@@ -626,6 +630,7 @@ impl App {
         // 会话更新排空（状态机 + HUD + 结束处理）。
         let mut session_updates = Vec::new();
         let mut session_running = false;
+        let mut hud_dirty = false;
         if let Some(active) = self.session.as_ref() {
             session_running = active.handle.is_running();
             while let Some(update) = active.handle.try_recv_update() {
@@ -633,6 +638,10 @@ impl App {
             }
         }
         for update in session_updates {
+            if let SessionUpdate::Hud(snap) = &update {
+                self.session_hud = Some(snap.clone());
+                hud_dirty = true;
+            }
             if let SessionUpdate::Negotiated { width, height, .. } = &update {
                 if let Some(active) = self.session.as_mut() {
                     active.video = Some((*width, *height));
@@ -645,6 +654,9 @@ impl App {
         }
         if self.session.is_some() {
             self.apply_session_view();
+            if hud_dirty {
+                self.apply_hud();
+            }
             if !session_running {
                 self.release_pressed_input();
                 let text = self.session_overlay_text();
@@ -840,6 +852,21 @@ impl App {
             .and_then(|panel| panel.cast::<UIElement>().ok())
             .and_then(|element| element.Visibility().ok())
             .is_some_and(|v| v == Visibility::Visible)
+    }
+
+    /// 标题栏 + 登录页使用仓库 `app.ico` 的真实 logo（解码失败时保留占位）。
+    fn apply_brand(&self) {
+        let Some(bitmap) = crate::ui::brand::icon_bitmap() else {
+            return;
+        };
+        let Ok(source) = bitmap.cast::<windows::UI::Xaml::Media::ImageSource>() else {
+            return;
+        };
+        for name in ["TitleLogo", "BrandLogo"] {
+            if let Some(img) = self.find_opt::<windows::UI::Xaml::Controls::Image>(name) {
+                let _ = img.SetSource(&source);
+            }
+        }
     }
 
     fn apply_scale(&mut self) -> Result<()> {

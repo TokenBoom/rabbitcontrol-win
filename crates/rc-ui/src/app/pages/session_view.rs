@@ -249,13 +249,30 @@ impl App {
                 let badge = format!("{backend} · {transport}",);
                 let _ = self.label("SessionBackend", &badge);
                 self.set_session_overlay("", false);
+                self.apply_hud();
             }
             SessionView::Ended(reason) => {
                 let _ = self.label("SessionStatus", &format!("已结束：{reason}"));
                 self.set_session_overlay(&format!("会话已结束：{reason}"), false);
                 let _ = self.set_visible("SessionReconnect", true);
+                let _ = self.set_visible("SessionHudPanel", false);
             }
         }
+    }
+
+    /// HUD 快照 → 左下浮层（core 1s 节流；受设置页 show_hud 开关控制）。
+    pub(crate) fn apply_hud(&mut self) {
+        let negotiated = matches!(self.session_view, SessionView::Negotiated { .. });
+        let show = self.prefs.lock().unwrap().show_hud;
+        if !negotiated || !show {
+            let _ = self.set_visible("SessionHudPanel", false);
+            return;
+        }
+        let Some(snap) = self.session_hud.clone() else {
+            return;
+        };
+        let _ = self.label("SessionHud", &sess::format_hud(&snap));
+        let _ = self.set_visible("SessionHudPanel", true);
     }
 
     pub(crate) fn set_session_overlay(&self, text: &str, spinner: bool) {
