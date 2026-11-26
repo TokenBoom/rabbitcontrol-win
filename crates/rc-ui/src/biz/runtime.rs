@@ -16,7 +16,7 @@ use rc_client_core::signal_client::{
     TokenRefresher,
 };
 
-use crate::auth;
+use crate::biz::auth;
 
 /// 单次 `poll` 排空得到的事件集合。
 #[derive(Debug, Default)]

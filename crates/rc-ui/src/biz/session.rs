@@ -271,9 +271,9 @@ mod tests {
 
     #[test]
     fn normalize_maps_center_to_mid() {
-        // 视口满铺 stage：中心 → 32768。
+        // 视口满铺 stage：中心 → 32767（65535/2 截断）。
         let (x, y) = normalize_in_video(500.0, 250.0, 1000.0, 500.0, None);
-        assert!((32767..=32769).contains(&x), "x={x}");
-        assert!((16383..=16385).contains(&y), "y={y}");
+        assert!((32766..=32769).contains(&x), "x={x}");
+        assert!((32766..=32769).contains(&y), "y={y}");
     }
 }

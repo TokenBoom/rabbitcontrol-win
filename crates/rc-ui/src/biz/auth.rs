@@ -10,7 +10,7 @@ use rc_client_core::auth_client::{
 use rc_client_core::cert_manager::CertManager;
 use rc_client_core::server_config::{self, ServerConfig};
 
-use crate::settings;
+use crate::biz::settings;
 
 const MAINTAINER_INTERVAL: Duration = Duration::from_secs(30);
 

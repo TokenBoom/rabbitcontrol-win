@@ -4,7 +4,7 @@ use std::path::Path;
 use rc_client_core::auth_client::AuthHttpClient;
 use rc_client_core::server_config::{self, ServerConfig};
 
-use crate::auth;
+use crate::biz::auth;
 
 /// 首次配置时的默认服务器输入地址。
 pub const DEFAULT_ORIGIN_INPUT: &str = "https://127.0.0.1:21118";

@@ -1,17 +1,10 @@
 #![windows_subsystem = "windows"]
 
 mod app;
-mod auth;
-#[allow(dead_code)] // M2 会话管线接线后移除
-mod desktop;
-#[allow(dead_code)] // M2 会话管线接线后移除
-mod graphics;
-mod history;
-mod runtime;
-mod session;
-mod settings;
-mod shell;
-mod widgets;
+mod biz;
+#[allow(dead_code)] // M5a 接线后移除
+mod media;
+mod ui;
 
 use std::error::Error;
 
@@ -59,7 +52,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     rc_platform_win::register_all();
-    let shell = shell::Shell::new()?;
+    let shell = ui::shell::Shell::new()?;
     let mut app = app::App::new(&shell)?;
     shell.show_and_run(|| app.dispatch())?;
     Ok(())
