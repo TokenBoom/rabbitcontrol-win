@@ -431,3 +431,67 @@ impl Renderer for RendererWin {
         // D7 光标本地叠加：M3 实现。
     }
 }
+
+/// platform-win 兼容配置。
+#[derive(Debug, Clone)]
+pub struct D3d11RendererConfig {
+    /// 尺寸 (宽, 高)。
+    pub size: (u32, u32),
+    /// 垂直同步。
+    pub vsync: bool,
+    /// 会话起始时间（未使用，保留兼容）。
+    pub session_start: Option<std::time::Instant>,
+    /// 光标合成（未使用，保留兼容）。
+    pub cursor_compositing: bool,
+}
+
+/// platform-win 兼容渲染器别名。
+pub struct D3d11Renderer {
+    inner: RendererWin,
+}
+
+impl D3d11Renderer {
+    /// 创建渲染器。
+    pub fn new(_cfg: D3d11RendererConfig) -> Result<Self> {
+        Ok(Self {
+            inner: RendererWin::new(Some(0))?,
+        })
+    }
+
+    /// 从预分配表面创建（领养交换链）。
+    pub fn from_raw_panel(raw: usize, _cfg: D3d11RendererConfig) -> Result<Self> {
+        Ok(Self {
+            inner: RendererWin::new(Some(raw))?,
+        })
+    }
+
+    /// 表面指针（诊断用）。
+    pub fn surface_ptr(&self) -> usize {
+        0
+    }
+
+    /// 渲染器引用。
+    pub fn renderer(&self) -> &RendererWin {
+        &self.inner
+    }
+
+    /// 渲染器可变引用。
+    pub fn renderer_mut(&mut self) -> &mut RendererWin {
+        &mut self.inner
+    }
+}
+
+impl Renderer for D3d11Renderer {
+    fn present(&mut self, frame: DecodedFrame) -> Result<Timestamp> {
+        self.inner.present(frame)
+    }
+    fn resize(&mut self, size: (u32, u32)) -> Result<()> {
+        self.inner.resize(size)
+    }
+    fn set_vsync(&mut self, on: bool) {
+        self.inner.set_vsync(on)
+    }
+    fn set_cursor(&mut self, pos: (i32, i32), visible: bool) {
+        self.inner.set_cursor(pos, visible)
+    }
+}
