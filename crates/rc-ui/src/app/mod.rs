@@ -302,6 +302,19 @@ impl App {
                 }),
             )?;
         }
+        // M3.3 鼠标模式下拉
+        {
+            let sender = self.sender();
+            let combo: windows::UI::Xaml::Controls::Primitives::Selector =
+                self.root.FindName("StreamMouseBox")?.cast()?;
+            combo.SelectionChanged(
+                windows::UI::Xaml::Controls::SelectionChangedEventHandler::new(move |_, _| {
+                    let sender = sender.clone();
+                    sender.send(Event::Click(Action::MouseModeChanged));
+                    Ok(())
+                }),
+            )?;
+        }
         // 会话舞台输入（M2：鼠标 + 滚轮 + 键盘；watch_only 时不发送）
         {
             let sender = self.sender();
