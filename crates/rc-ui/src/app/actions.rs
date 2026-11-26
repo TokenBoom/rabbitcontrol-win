@@ -53,6 +53,7 @@ pub(crate) enum Action {
     MouseModeChanged,
     StageRectChanged(u32, u32),
     SessionFullscreen,
+    DisplayChanged,
 }
 
 pub(crate) enum Event {

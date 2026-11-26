@@ -352,6 +352,19 @@ impl App {
                 }),
             )?;
         }
+        // M3.8 显示器下拉
+        {
+            let sender = self.sender();
+            let combo: windows::UI::Xaml::Controls::Primitives::Selector =
+                self.find("StreamDisplayBox")?;
+            combo.SelectionChanged(
+                windows::UI::Xaml::Controls::SelectionChangedEventHandler::new(move |_, _| {
+                    let sender = sender.clone();
+                    sender.send(Event::Click(Action::DisplayChanged));
+                    Ok(())
+                }),
+            )?;
+        }
         // 会话舞台输入（M2：鼠标 + 滚轮 + 键盘；watch_only 时不发送）
         {
             let sender = self.sender();
@@ -787,8 +800,10 @@ impl App {
                     codec: codec.clone(),
                     supported_codecs: supported_codecs.clone(),
                     client_supports_hevc: *client_supports_hevc,
-                    // DisplayConfig 不携带鼠标模式，保留现值
+                    // DisplayConfig 不携带鼠标模式/显示器列表，保留现值
                     mouse_mode: self.quality.mouse_mode.clone(),
+                    displays: self.quality.displays.clone(),
+                    active_display_id: self.quality.active_display_id,
                 };
                 self.quality_fps_options = sess::fps_candidates(*max_fps);
                 self.sync_quality_bar()?;
@@ -796,6 +811,28 @@ impl App {
             // M3.3：鼠标模式回传 → 工具条选中态
             if let SessionUpdate::MouseModeState { mode } = &update {
                 self.quality.mouse_mode = Some(mode.clone());
+                self.sync_quality_bar()?;
+            }
+            // M3.8：显示器列表回传 → 下拉重建
+            if let SessionUpdate::DisplaysState {
+                displays,
+                active_display_id,
+            } = &update
+            {
+                self.quality.displays = displays
+                    .iter()
+                    .map(|d| {
+                        let tag = if d.is_virtual {
+                            "（虚拟）"
+                        } else if d.is_main {
+                            "（主）"
+                        } else {
+                            ""
+                        };
+                        (d.id, format!("{} {}", d.name, tag))
+                    })
+                    .collect();
+                self.quality.active_display_id = *active_display_id;
                 self.sync_quality_bar()?;
             }
             if matches!(update, SessionUpdate::Ended { .. }) {
@@ -959,6 +996,10 @@ impl App {
                 if let Some(target) = target {
                     self.start_session(&target)?;
                 }
+                Ok(())
+            }
+            Action::DisplayChanged => {
+                self.on_display_changed()?;
                 Ok(())
             }
             Action::SessionFullscreen => {

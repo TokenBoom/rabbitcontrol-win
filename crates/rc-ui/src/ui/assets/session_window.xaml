@@ -51,6 +51,8 @@
       <ComboBox x:Name="StreamCodecBox" Width="96" MinHeight="30" FontSize="12"/>
       <TextBlock Text="鼠标" FontSize="12" Foreground="#9DB2CC" VerticalAlignment="Center"/>
       <ComboBox x:Name="StreamMouseBox" Width="110" MinHeight="30" FontSize="12"/>
+      <TextBlock x:Name="DisplayLabel" Text="显示器" FontSize="12" Foreground="#9DB2CC" VerticalAlignment="Center" Visibility="Collapsed"/>
+      <ComboBox x:Name="StreamDisplayBox" Width="170" MinHeight="30" FontSize="12" Visibility="Collapsed"/>
     </StackPanel>
   </Border>
   <Grid Grid.Row="2" x:Name="SessionStage">

@@ -191,6 +191,10 @@ pub struct QualityState {
     pub client_supports_hevc: bool,
     /// 当前生效鼠标模式（`"smart"` / `"remote"` / `"local"`；未上报时 `None`）。
     pub mouse_mode: Option<String>,
+    /// 可用显示器列表 `(display_id, 展示名)`（M3.8）。
+    pub displays: Vec<(u32, String)>,
+    /// 当前采集的显示器 ID。
+    pub active_display_id: u32,
 }
 
 /// 鼠标模式候选（固定顺序，与下拉框索引一一对应）。

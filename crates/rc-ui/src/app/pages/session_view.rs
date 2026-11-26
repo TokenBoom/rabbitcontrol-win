@@ -532,6 +532,34 @@ impl App {
         Ok(())
     }
 
+    /// M3.8 显示器切换：与当前采集屏一致时跳过。
+    pub(crate) fn on_display_changed(&mut self) -> Result<()> {
+        use windows::UI::Xaml::Controls::{ComboBox, Primitives};
+        if !matches!(self.session_view, SessionView::Negotiated { .. }) {
+            return Ok(());
+        }
+        let index = self
+            .find_opt::<ComboBox>("StreamDisplayBox")
+            .and_then(|b| b.cast::<Primitives::Selector>().ok())
+            .and_then(|s| s.SelectedIndex().ok())
+            .unwrap_or(-1);
+        if index < 0 {
+            return Ok(());
+        }
+        if let Some((display_id, _)) = self.quality.displays.get(index as usize) {
+            if *display_id != self.quality.active_display_id {
+                if let Some(active) = self.session.as_ref() {
+                    active.handle.send_display_ctrl(
+                        rc_client_core::display_ctrl::DisplayControlMsg::SwitchDisplay {
+                            display_id: *display_id,
+                        },
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// 鼠标模式变更：与当前生效一致时跳过（防程序化回填空下发）。
     pub(crate) fn on_mouse_mode_changed(&mut self) -> Result<()> {
         use windows::UI::Xaml::Controls::{ComboBox, Primitives};
