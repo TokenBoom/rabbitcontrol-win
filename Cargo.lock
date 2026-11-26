@@ -1081,6 +1081,8 @@ dependencies = [
  "rc-client-core",
  "rc-platform-win",
  "rc-types",
+ "serde",
+ "serde_json",
  "windows 0.37.0",
 ]
 

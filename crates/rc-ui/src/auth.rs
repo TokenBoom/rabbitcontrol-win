@@ -117,6 +117,10 @@ pub fn format_auth_error(err: AuthClientError) -> String {
             message,
             ..
         } => {
+            let lower = message.trim().to_ascii_lowercase();
+            if lower.contains("invalid email or password") || lower.contains("invalid credential") {
+                return "邮箱或密码不正确。".to_string();
+            }
             if !message.trim().is_empty() {
                 message
             } else {
@@ -275,6 +279,27 @@ pub fn logout(manager: &AuthSessionManager) -> Result<(), String> {
 pub fn list_my_devices(manager: &AuthSessionManager) -> Result<Vec<MyDeviceInfo>, String> {
     with_valid_token(manager, |client, token| client.list_my_devices(token))
         .map_err(format_auth_error)
+}
+
+/// 重命名设备（对齐 iOS `renameDevice`）。
+pub fn rename_device(
+    manager: &AuthSessionManager,
+    device_id: &str,
+    alias: &str,
+) -> Result<(), String> {
+    with_valid_token(manager, |client, token| {
+        client.rename_device(token, device_id, alias)
+    })
+    .map(|_| ())
+    .map_err(format_auth_error)
+}
+
+/// 解绑设备（对齐 iOS `removeDevice`）。
+pub fn remove_device(manager: &AuthSessionManager, device_id: &str) -> Result<(), String> {
+    with_valid_token(manager, |client, token| {
+        client.remove_device(token, device_id)
+    })
+    .map_err(format_auth_error)
 }
 
 fn bind_device_and_ensure_cert(

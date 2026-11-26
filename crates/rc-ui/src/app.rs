@@ -1,128 +1,173 @@
+//! UI 线程应用壳：路由、页面装配与事件分发。
+//!
+//! 线程模型：仅向 UI 线程传递纯值消息（XAML 控件始终停留在 STA 线程
+//! 内）；后台线程经 [`Events`] 回投 [`Event`]，由 50ms 定时器与显式通知
+//! 共同驱动 `dispatch` 排空。
+
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread;
 
+use rc_client_core::app_prefs::{self, AppPrefs};
 use rc_client_core::auth_client::MyDeviceInfo;
-use rc_client_core::server_config;
+use rc_client_core::server_config::{self, ServerStatusSnapshot};
 use windows::{
-    core::{Interface, Result},
+    core::{Interface, Result, HSTRING},
     System::VirtualKey,
-    Win32::{Foundation::HWND, UI::WindowsAndMessaging::PostMessageW},
+    Win32::UI::HiDpi::GetDpiForWindow,
     UI::Xaml::{
-        Controls::Primitives::ButtonBase,
-        Controls::{Control, PasswordBox, SwapChainPanel, TextBlock, TextBox},
+        Application,
+        Controls::Primitives::{ButtonBase, ToggleButton},
+        Controls::{ComboBox, Control, PasswordBox, StackPanel, TextBlock, TextBox, ToggleSwitch},
         FrameworkElement,
         Input::KeyEventHandler,
         Markup::XamlReader,
-        RoutedEventHandler, UIElement, Visibility,
+        Media::{ScaleTransform, Transform, TransformGroup},
+        RoutedEventHandler,
+        Shapes::Ellipse,
+        UIElement, Visibility,
     },
 };
 
 use crate::{
     auth::{self, AccountSession, AuthRuntime},
-    desktop,
-    graphics::Surface,
+    history::{self, TargetHistory},
+    runtime::SignalRuntime,
     settings,
-    shell::{Shell, UI_EVENT},
+    shell::{self, Shell, ShellNotifier, DESIGN_HEIGHT, DESIGN_WIDTH},
+    widgets,
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Page {
+    Devices,
+    Assist,
+    Favorites,
+    Settings,
+}
+
+#[derive(Clone)]
 enum Action {
     Login,
-    Settings,
-    Back,
-    Save,
+    OpenServerSettings,
+    SaveServer,
     Logout,
     RefreshDevices,
+    Nav(Page),
+    CopyId,
+    AssistToggled(bool),
+    ToggleCodeVisibility,
+    AdvancedToggle,
+    HistoryTabFav(bool),
+    DeviceConnect(String),
+    ConnectSubmit,
+    DeviceToggleFav(String),
+    DeviceRename(String),
+    DeviceUnbind(String),
+    RecentDelete(String),
+    RecentConnect(String),
+    SettingsTab(u8),
+    QualityChanged,
+    HudToggled(bool),
+    EncryptToggled(bool),
+    LockOnExitToggled(bool),
+    ProbeServer,
+    BannerDisconnect,
 }
 
 enum Event {
     Click(Action),
-    SaveServerFinished(std::result::Result<server_config::ServerConfig, String>),
     RestoreFinished(std::result::Result<Option<AccountSession>, String>),
     LoginFinished(std::result::Result<AccountSession, String>),
     LogoutFinished(std::result::Result<(), String>),
+    SaveServerFinished(std::result::Result<(), String>),
     DevicesFinished(std::result::Result<Vec<MyDeviceInfo>, String>),
-    ReloginRequired(String),
+    DeviceActionFinished(std::result::Result<(), String>),
 }
 
-// 仅向 UI 线程传递纯值消息，XAML 控件与交换链始终停留在 STA 线程内。
+/// 事件发送句柄（跨线程克隆便宜；XAML 对象不可经此传递）。
 #[derive(Clone)]
 struct Events {
     tx: Sender<Event>,
-    hwnd: HWND,
+    notifier: ShellNotifier,
 }
 
 impl Events {
     fn send(&self, event: Event) {
-        if self.tx.send(event).is_ok() {
-            unsafe {
-                PostMessageW(self.hwnd, UI_EVENT, None, None);
-            }
-        }
+        let _ = self.tx.send(event);
+        self.notifier.notify();
     }
 }
 
+/// 全局禁用控件清单（busy 态）；缺失的条目自动跳过。
+const BUSY_CONTROLS: [&str; 12] = [
+    "SignIn",
+    "Email",
+    "Password",
+    "Origin",
+    "SaveServer",
+    "BackToLogin",
+    "RefreshDevices",
+    "ConnectPeerButton",
+    "PeerCodeBox",
+    "LogoutButton",
+    "ProbeServer",
+    "NetworkOrigin",
+];
+
 pub struct App {
     root: FrameworkElement,
+    hwnd: windows::Win32::Foundation::HWND,
+    last_dpi: u32,
     events: Events,
     inbox: Receiver<Event>,
     auth: AuthRuntime,
+    runtime: Arc<SignalRuntime>,
+    history: Mutex<TargetHistory>,
+    prefs: Mutex<AppPrefs>,
     busy: bool,
     logged_in: bool,
-    surface: Option<Surface>,
-    width: u32,
-    height: u32,
+    page: Page,
+    devices: Vec<MyDeviceInfo>,
+    online_override: std::collections::HashMap<String, bool>,
+    lan_codes: Vec<String>,
+    history_tab_fav: bool,
+    tick: u64,
 }
 
 impl App {
     pub fn new(shell: &Shell) -> std::result::Result<Self, Box<dyn std::error::Error>> {
+        install_styles()?;
         let root = XamlReader::Load(include_str!("view.xaml"))?.cast()?;
         let (tx, inbox) = mpsc::channel();
-        let resolution = desktop::initial_resolution();
+        let notifier = shell.notifier();
         let auth = AuthRuntime::new().map_err(std::io::Error::other)?;
+        let runtime = Arc::new(SignalRuntime::new(auth.manager()));
+        let prefs_path = app_prefs::default_prefs_path();
+        let prefs = app_prefs::load_from_path(&prefs_path);
+        let history_store = TargetHistory::load_from(&history::default_history_path());
         let mut app = Self {
             root,
-            events: Events {
-                tx,
-                hwnd: shell.hwnd(),
-            },
+            hwnd: shell.hwnd(),
+            last_dpi: unsafe { GetDpiForWindow(shell.hwnd()) },
+            events: Events { tx, notifier },
             inbox,
             auth,
+            runtime,
+            history: Mutex::new(history_store),
+            prefs: Mutex::new(prefs),
             busy: false,
             logged_in: false,
-            surface: None,
-            width: resolution.width,
-            height: resolution.height,
+            page: Page::Devices,
+            devices: Vec::new(),
+            online_override: std::collections::HashMap::new(),
+            lan_codes: Vec::new(),
+            history_tab_fav: false,
+            tick: 0,
         };
-        for (name, action) in [
-            ("SignIn", Action::Login),
-            ("SignOut", Action::Logout),
-            ("Settings", Action::Settings),
-            ("Back", Action::Back),
-            ("Save", Action::Save),
-            ("RefreshDevices", Action::RefreshDevices),
-        ] {
-            let events = app.events.clone();
-            app.find::<ButtonBase>(name)?
-                .Click(RoutedEventHandler::new(move |_, _| {
-                    events.send(Event::Click(action));
-                    Ok(())
-                }))?;
-        }
-        for (name, action) in [("Password", Action::Login), ("Origin", Action::Save)] {
-            let events = app.events.clone();
-            app.find::<UIElement>(name)?
-                .KeyDown(KeyEventHandler::new(move |_, args| {
-                    if let Some(args) = args {
-                        if args.Key()? == VirtualKey::Enter {
-                            args.SetHandled(true)?;
-                            events.send(Event::Click(action));
-                        }
-                    }
-                    Ok(())
-                }))?;
-        }
+        app.wire()?;
         app.update_caption()?;
+        app.apply_scale()?;
         if app.auth.has_saved_session() {
             app.set_busy(true)?;
             app.label("LoginError", "正在恢复登录…")?;
@@ -140,72 +185,221 @@ impl App {
         Ok(app)
     }
 
+    fn sender(&self) -> Events {
+        self.events.clone()
+    }
+
+    fn wire(&mut self) -> Result<()> {
+        // 导航
+        for (name, page) in [
+            ("NavDevices", Page::Devices),
+            ("NavAssist", Page::Assist),
+            ("NavFavorites", Page::Favorites),
+            ("NavSettings", Page::Settings),
+        ] {
+            let sender = self.sender();
+            // 0.37 投影下继承成员经 ButtonBase 接口访问。
+            let button: ButtonBase = self.root.FindName(name)?.cast()?;
+            button.Click(RoutedEventHandler::new(move |_, _| {
+                sender.send(Event::Click(Action::Nav(page)));
+                Ok(())
+            }))?;
+        }
+        // 登录流
+        self.click("SignIn", Action::Login)?;
+        self.click("ServerLink", Action::OpenServerSettings)?;
+        self.click("SaveServer", Action::SaveServer)?;
+        self.key_enter("Password", Action::Login)?;
+        self.key_enter("Origin", Action::SaveServer)?;
+        // 主壳
+        self.click("LogoutButton", Action::Logout)?;
+        self.click("RefreshDevices", Action::RefreshDevices)?;
+        // 开始协助
+        self.click("CopyIdButton", Action::CopyId)?;
+        self.click("ToggleCodeButton", Action::ToggleCodeVisibility)?;
+        self.click("ConnectPeerButton", Action::ConnectSubmit)?;
+        self.click("PeerAdvancedButton", Action::AdvancedToggle)?;
+        self.click("HistoryTabRecent", Action::HistoryTabFav(false))?;
+        self.click("HistoryTabFav", Action::HistoryTabFav(true))?;
+        {
+            let sender = self.sender();
+            let toggle: ToggleSwitch = self.root.FindName("AssistToggle")?.cast()?;
+            let toggle_ref = toggle.clone();
+            toggle.Toggled(RoutedEventHandler::new(move |_, _| {
+                let on = toggle_ref.IsOn().unwrap_or(false);
+                sender.send(Event::Click(Action::AssistToggled(on)));
+                Ok(())
+            }))?;
+        }
+        {
+            // 输入框：实时校验 9 位码并联动连接按钮可用态；回车直接发起。
+            let sender = self.sender();
+            let box_: TextBox = self.root.FindName("PeerCodeBox")?.cast()?;
+            let connect: Control = self.root.FindName("ConnectPeerButton")?.cast()?;
+            let connect_ref = connect.clone();
+            let box_for_changed = box_.clone();
+            box_.TextChanged(windows::UI::Xaml::Controls::TextChangedEventHandler::new(
+                move |_, _| {
+                    let digits = digit_of(&box_for_changed.Text().unwrap_or_default().to_string());
+                    let _ = connect_ref.SetIsEnabled(digits.len() == 9);
+                    Ok(())
+                },
+            ))?;
+            let box_for_key = box_.clone();
+            let box_element: UIElement = box_.cast()?;
+            box_element.KeyDown(KeyEventHandler::new(move |_, args| {
+                if let Some(args) = args {
+                    if args.Key()? == VirtualKey::Enter {
+                        let digits = digit_of(&box_for_key.Text().unwrap_or_default().to_string());
+                        if digits.len() == 9 {
+                            args.SetHandled(true)?;
+                            let sender = sender.clone();
+                            sender.send(Event::Click(Action::DeviceConnect(digits)));
+                        }
+                    }
+                }
+                Ok(())
+            }))?;
+        }
+        // 设置
+        self.settings_tab("TabGeneral", 0)?;
+        self.settings_tab("TabSecurity", 1)?;
+        self.settings_tab("TabNetwork", 2)?;
+        {
+            let sender = self.sender();
+            let combo: windows::UI::Xaml::Controls::Primitives::Selector =
+                self.root.FindName("QualityBox")?.cast()?;
+            combo.SelectionChanged(
+                windows::UI::Xaml::Controls::SelectionChangedEventHandler::new(move |_, _| {
+                    let sender = sender.clone();
+                    sender.send(Event::Click(Action::QualityChanged));
+                    Ok(())
+                }),
+            )?;
+        }
+        self.switch_toggled("HudToggle", Action::HudToggled(true))?;
+        self.switch_toggled("EncryptToggle", Action::EncryptToggled(true))?;
+        self.switch_toggled("LockOnExitToggle", Action::LockOnExitToggled(true))?;
+        self.click("ProbeServer", Action::ProbeServer)?;
+        self.click("BannerDisconnect", Action::BannerDisconnect)?;
+        Ok(())
+    }
+
+    /// 以名字接一个按钮类事件到指定 Action。
+    fn click(&self, name: &str, action: Action) -> Result<()> {
+        let sender = self.sender();
+        let button: ButtonBase = self.root.FindName(name)?.cast()?;
+        button.Click(RoutedEventHandler::new(move |_, _| {
+            sender.send(Event::Click(action.clone()));
+            Ok(())
+        }))?;
+        Ok(())
+    }
+
+    fn key_enter(&self, name: &str, action: Action) -> Result<()> {
+        let sender = self.sender();
+        let element: UIElement = self.root.FindName(name)?.cast()?;
+        element.KeyDown(KeyEventHandler::new(move |_, args| {
+            if let Some(args) = args {
+                if args.Key()? == VirtualKey::Enter {
+                    args.SetHandled(true)?;
+                    sender.send(Event::Click(action.clone()));
+                }
+            }
+            Ok(())
+        }))?;
+        Ok(())
+    }
+
+    fn switch_toggled(&self, name: &str, action: Action) -> Result<()> {
+        let sender = self.sender();
+        let toggle: ToggleSwitch = self.root.FindName(name)?.cast()?;
+        let toggle_ref = toggle.clone();
+        // 预解析目标 Action 形态，闭包内仅注入当前布尔值。
+        let probe = match action {
+            Action::HudToggled(_) => 1,
+            Action::EncryptToggled(_) => 2,
+            Action::LockOnExitToggled(_) => 3,
+            _ => 0,
+        };
+        toggle.Toggled(RoutedEventHandler::new(move |_, _| {
+            let on = toggle_ref.IsOn().unwrap_or(false);
+            let event_action = match probe {
+                1 => Action::HudToggled(on),
+                2 => Action::EncryptToggled(on),
+                3 => Action::LockOnExitToggled(on),
+                _ => Action::HudToggled(on),
+            };
+            sender.send(Event::Click(event_action));
+            Ok(())
+        }))?;
+        Ok(())
+    }
+
+    /// Tab 用 Checked/Unchecked 事件驱动（Click 在 islands 的 ToggleButton
+    /// 上不触发；导航按钮正常是因导航依赖同一事件模型——此差异实测得出）。
+    fn settings_tab(&self, name: &str, index: u8) -> Result<()> {
+        let sender = self.sender();
+        let tab: ToggleButton = self.root.FindName(name)?.cast()?;
+        tab.Checked(RoutedEventHandler::new(move |_, _| {
+            sender.send(Event::Click(Action::SettingsTab(index)));
+            Ok(())
+        }))?;
+        let sender = self.sender();
+        tab.Unchecked(RoutedEventHandler::new(move |_, _| {
+            let _ = sender; // Unchecked 仅用于视觉归一，不触发切换
+            Ok(())
+        }))?;
+        Ok(())
+    }
+
     fn find<T: Interface>(&self, name: &str) -> Result<T> {
         self.root.FindName(name)?.cast()
     }
 
+    fn find_opt<T: Interface>(&self, name: &str) -> Option<T> {
+        self.root.FindName(name).ok()?.cast().ok()
+    }
+
     fn label(&self, name: &str, value: &str) -> Result<()> {
-        self.find::<TextBlock>(name)?.SetText(value)
+        let text: TextBlock = self.find(name)?;
+        text.SetText(HSTRING::from(value))
     }
 
-    fn show(&self, page: &str) -> Result<()> {
-        for name in ["LoginPage", "SettingsPage", "DesktopPage"] {
-            self.find::<UIElement>(name)?
-                .SetVisibility(if name == page {
-                    Visibility::Visible
-                } else {
-                    Visibility::Collapsed
-                })?;
-        }
-        Ok(())
-    }
-
-    fn update_caption(&self) -> Result<()> {
-        let origin = settings::format_origin(&self.auth.server_config());
-        self.label("DesktopServer", &origin)?;
-        self.label("ServerCaption", &origin)
+    fn set_visible(&self, name: &str, visible: bool) -> Result<()> {
+        let element: UIElement = self.find(name)?;
+        element.SetVisibility(if visible {
+            Visibility::Visible
+        } else {
+            Visibility::Collapsed
+        })
     }
 
     fn set_busy(&mut self, busy: bool) -> Result<()> {
         self.busy = busy;
-        for name in [
-            "SignIn",
-            "SignOut",
-            "Settings",
-            "Email",
-            "Password",
-            "Origin",
-            "Save",
-            "Back",
-            "RefreshDevices",
-        ] {
-            self.find::<Control>(name)?.SetIsEnabled(!busy)?;
+        for name in BUSY_CONTROLS {
+            if let Some(control) = self.find_opt::<Control>(name) {
+                control.SetIsEnabled(!busy)?;
+            }
         }
         Ok(())
     }
 
     pub fn dispatch(&mut self) -> Result<()> {
+        // DPI 变化：window_proc 已重设窗口尺寸，这里同步根布局缩放。
+        let dpi = unsafe { GetDpiForWindow(self.hwnd) };
+        if dpi != self.last_dpi {
+            self.last_dpi = dpi;
+            self.apply_scale()?;
+        }
         while let Ok(event) = self.inbox.try_recv() {
             match event {
                 Event::Click(_) if self.busy => {}
                 Event::Click(action) => self.on_click(action)?,
-                Event::SaveServerFinished(result) => {
-                    self.set_busy(false)?;
-                    match result {
-                        Err(message) => self.label("SettingsError", &message)?,
-                        Ok(_) => {
-                            self.find::<PasswordBox>("Password")?.SetPassword("")?;
-                            self.update_caption()?;
-                            self.label("SettingsError", "")?;
-                            self.label("LoginError", "")?;
-                            self.show("LoginPage")?;
-                        }
-                    }
-                }
                 Event::RestoreFinished(result) => {
                     self.set_busy(false)?;
                     match result {
-                        Ok(Some(account)) => self.open_desktop(account)?,
+                        Ok(Some(account)) => self.open_main(&account)?,
                         Ok(None) => self.label("LoginError", "")?,
                         Err(message) => self.label("LoginError", &message)?,
                     }
@@ -214,78 +408,128 @@ impl App {
                     self.set_busy(false)?;
                     match result {
                         Err(message) => self.label("LoginError", &message)?,
-                        Ok(account) => self.open_desktop(account)?,
+                        Ok(account) => self.open_main(&account)?,
                     }
                 }
                 Event::LogoutFinished(result) => {
                     self.set_busy(false)?;
                     self.return_to_login(result.err().unwrap_or_default())?;
                 }
+                Event::SaveServerFinished(result) => {
+                    self.set_busy(false)?;
+                    match result {
+                        Err(message) => {
+                            self.label("SettingsError", &message)?;
+                            self.label("NetworkError", &message)?;
+                        }
+                        Ok(()) => {
+                            self.find::<PasswordBox>("Password")?.SetPassword("")?;
+                            self.update_caption()?;
+                            self.label("SettingsError", "")?;
+                            self.label("LoginError", "")?;
+                            self.label("NetworkError", "服务器已保存并通过校验。")?;
+                            if !self.logged_in {
+                                self.set_visible("LoginView", true)?;
+                                self.set_visible("ServerSettingsView", false)?;
+                            } else {
+                                self.settings_tab_current()?;
+                            }
+                        }
+                    }
+                }
                 Event::DevicesFinished(result) => {
                     self.set_busy(false)?;
                     match result {
-                        Ok(devices) => {
-                            let local_id = self.auth.server_config().cached_device_id;
-                            self.update_device_summary(local_id.as_deref(), &devices)?;
+                        Ok(mut devices) => {
+                            // 服务端偶发重复条目时按设备码去重（快照防御）。
+                            devices.sort_by(|a, b| a.device_id.cmp(&b.device_id));
+                            devices.dedup_by(|a, b| a.device_id == b.device_id);
+                            self.devices = devices;
+                            // 不清 online_override：实时事件可能比 REST 快照更新。
+                            self.render_devices()?;
+                            self.render_favorites()?;
                         }
                         Err(message) => {
                             if !self.auth.is_logged_in() {
                                 self.return_to_login(message)?;
                             } else {
-                                self.label(
-                                    "DeviceSummary",
-                                    &format!("刷新设备列表失败：{message}"),
-                                )?;
+                                self.label("AssistError", &format!("刷新设备列表失败：{message}"))?;
                             }
                         }
                     }
                 }
-                Event::ReloginRequired(reason) => {
-                    if self.logged_in {
-                        self.set_busy(false)?;
-                        self.return_to_login(reason)?;
+                Event::DeviceActionFinished(result) => {
+                    self.set_busy(false)?;
+                    match result {
+                        Ok(()) => self.on_click(Action::RefreshDevices)?,
+                        Err(message) => self.label("AssistError", &message)?,
                     }
                 }
+            }
+        }
+        self.on_tick()?;
+        Ok(())
+    }
+
+    fn on_tick(&mut self) -> Result<()> {
+        if !self.logged_in {
+            return Ok(());
+        }
+        self.tick += 1;
+        let generation = self.runtime.generation();
+        let events = self.runtime.poll();
+        if let Some(reason) = events.kicked_reason {
+            self.auth.stop_maintainer();
+            self.runtime.stop();
+            self.set_busy(false)?;
+            self.return_to_login(format!("已退出登录：{reason}"))?;
+            return Ok(());
+        }
+        if let Some(status) = events.status {
+            self.apply_status(&status, generation)?;
+        }
+        if !events.device_events.is_empty() {
+            for event in events.device_events {
+                self.online_override.insert(event.device_id, event.online);
+            }
+            self.render_devices()?;
+        }
+        // 每约 1s 刷新一次 LAN 直连候选。
+        if self.tick % 20 == 0 {
+            let codes = self
+                .runtime
+                .lan_peers()
+                .iter()
+                .filter_map(|peer| peer.device_id.clone())
+                .collect::<Vec<_>>();
+            if codes != self.lan_codes {
+                self.lan_codes = codes;
+                self.render_devices()?;
             }
         }
         Ok(())
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn on_click(&mut self, action: Action) -> Result<()> {
         match action {
             Action::Login => self.start_login(),
-            Action::Settings => {
+            Action::OpenServerSettings => {
+                let origin = settings::editable_origin(&self.auth.server_config());
                 self.find::<TextBox>("Origin")?
-                    .SetText(settings::editable_origin(&self.auth.server_config()))?;
+                    .SetText(HSTRING::from(&origin))?;
                 self.label("SettingsError", "")?;
-                self.show("SettingsPage")
+                self.set_visible("LoginView", false)?;
+                self.set_visible("ServerSettingsView", true)
             }
-            Action::Back => self.show("LoginPage"),
-            Action::Save => {
-                let input = self.find::<TextBox>("Origin")?.Text()?.to_string();
-                self.set_busy(true)?;
-                self.label("SettingsError", "正在连接并校验服务器…")?;
-                let manager = self.auth.manager();
-                let server_path = self.auth.server_path();
-                let events = self.events.clone();
-                thread::spawn(move || {
-                    events.send(Event::SaveServerFinished(auth::probe_and_save_server(
-                        &manager,
-                        &server_path,
-                        &input,
-                    )));
-                });
-                Ok(())
-            }
+            Action::SaveServer => self.save_server_settings(),
+            Action::ProbeServer => self.save_server_settings(),
             Action::Logout => {
                 if self.logged_in {
-                    self.auth.stop_maintainer();
-                    self.set_busy(true)?;
-                    let manager = self.auth.manager();
-                    let events = self.events.clone();
-                    thread::spawn(move || {
-                        events.send(Event::LogoutFinished(auth::logout(&manager)));
-                    });
+                    self.do_logout()?;
+                } else {
+                    self.set_visible("LoginView", true)?;
+                    self.set_visible("ServerSettingsView", false)?;
                 }
                 Ok(())
             }
@@ -293,14 +537,193 @@ impl App {
                 if self.logged_in {
                     self.set_busy(true)?;
                     let manager = self.auth.manager();
-                    let events = self.events.clone();
+                    let events = self.sender();
                     thread::spawn(move || {
                         events.send(Event::DevicesFinished(auth::list_my_devices(&manager)));
                     });
                 }
                 Ok(())
             }
+            Action::Nav(page) => {
+                self.page = page;
+                self.show_page(page)
+            }
+            Action::CopyId => {
+                if let Some(id) = self.auth.server_config().cached_device_id.clone() {
+                    copy_to_clipboard(&server_config::format_device_id(&id));
+                    self.label("AssistError", "设备 ID 已复制到剪贴板。")?;
+                } else {
+                    self.label("AssistError", "本机设备码尚未分配。")?;
+                }
+                Ok(())
+            }
+            Action::AssistToggled(on) => {
+                if let Err(err) = self.runtime.set_allow_remote_assist(on) {
+                    self.label("AssistError", &err)?;
+                }
+                self.save_prefs_patch(|prefs| {
+                    prefs.apply_security_patch(rc_client_core::app_prefs::SecurityPrefsPatch {
+                        allow_remote_assist: Some(on),
+                        ..Default::default()
+                    })
+                })
+            }
+            Action::ToggleCodeVisibility => Ok(()),
+            Action::AdvancedToggle => {
+                let visible = self.peer_advanced_visible();
+                self.set_visible("PeerAdvancedRow", !visible)
+            }
+            Action::HistoryTabFav(fav) => {
+                self.history_tab_fav = fav;
+                self.render_history()
+            }
+            Action::DeviceConnect(code) => self.prefill_connect(&code),
+            Action::ConnectSubmit => {
+                let text = self.find::<TextBox>("PeerCodeBox")?.Text()?.to_string();
+                let digits = digit_of(&text);
+                if digits.len() == 9 {
+                    self.prefill_connect(&digits)?;
+                }
+                Ok(())
+            }
+            Action::DeviceToggleFav(device_id) => {
+                self.history.lock().unwrap().toggle_favorite(&device_id);
+                self.persist_history()?;
+                self.render_devices()?;
+                self.render_history()
+            }
+            Action::DeviceRename(device_id) => {
+                let input = prompt_text("重命名设备");
+                if let Some(alias) = input.filter(|alias| !alias.trim().is_empty()) {
+                    self.set_busy(true)?;
+                    let manager = self.auth.manager();
+                    let events = self.sender();
+                    thread::spawn(move || {
+                        let result = auth::rename_device(&manager, &device_id, alias.trim());
+                        events.send(Event::DeviceActionFinished(result));
+                    });
+                }
+                Ok(())
+            }
+            Action::DeviceUnbind(device_id) => {
+                self.set_busy(true)?;
+                let manager = self.auth.manager();
+                let events = self.sender();
+                thread::spawn(move || {
+                    let result = auth::remove_device(&manager, &device_id);
+                    events.send(Event::DeviceActionFinished(result));
+                });
+                Ok(())
+            }
+            Action::RecentDelete(device_id) => {
+                self.history.lock().unwrap().remove_recent(&device_id);
+                self.persist_history()?;
+                self.render_history()
+            }
+            Action::RecentConnect(code) => self.prefill_connect(&code),
+            Action::SettingsTab(index) => {
+                self.apply_settings_tab(index)?;
+                Ok(())
+            }
+            Action::QualityChanged => {
+                let selector: windows::UI::Xaml::Controls::Primitives::Selector =
+                    self.find::<ComboBox>("QualityBox")?.cast()?;
+                let index = selector.SelectedIndex()?;
+                let preset = ["auto", "8m", "14m", "30m"][index.max(0) as usize % 4];
+                self.save_prefs_patch(|prefs| {
+                    prefs.apply_stream_patch(rc_client_core::app_prefs::StreamPrefsPatch {
+                        bitrate_preset: Some(preset.to_string()),
+                        ..Default::default()
+                    })
+                })
+            }
+            Action::HudToggled(on) => self.save_prefs_patch(|prefs| {
+                prefs.apply_stream_patch(rc_client_core::app_prefs::StreamPrefsPatch {
+                    show_hud: Some(on),
+                    ..Default::default()
+                })
+            }),
+            Action::EncryptToggled(on) => self.save_prefs_patch(|prefs| {
+                prefs.apply_security_patch(rc_client_core::app_prefs::SecurityPrefsPatch {
+                    default_encrypt_connection: Some(on),
+                    ..Default::default()
+                })
+            }),
+            Action::LockOnExitToggled(on) => self.save_prefs_patch(|prefs| {
+                prefs.apply_stream_patch(rc_client_core::app_prefs::StreamPrefsPatch {
+                    lock_on_exit: Some(on),
+                    ..Default::default()
+                })
+            }),
+            Action::BannerDisconnect => {
+                self.label(
+                    "AssistError",
+                    "被控链路尚未开放（M5）：当前没有活跃的被控会话。",
+                )?;
+                Ok(())
+            }
         }
+    }
+
+    /// 连接请求先导：填入开始协助页并导向（M2 接入真实会话）。
+    fn prefill_connect(&mut self, code: &str) -> Result<()> {
+        // 语义对齐 iOS TargetHistory：发起连接即记录最近目标。
+        let at_sec = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let name = self
+            .devices
+            .iter()
+            .find(|d| d.device_id == code)
+            .map(|d| self.device_name_of(d))
+            .unwrap_or_else(|| code.to_string());
+        self.history
+            .lock()
+            .unwrap()
+            .record_connect(code, &name, at_sec);
+        self.persist_history()?;
+        self.label("AssistError", "会话链路将在 M2 里程碑开放：目标已就绪。")?;
+        self.find::<TextBox>("PeerCodeBox")?
+            .SetText(HSTRING::from(&server_config::format_device_id(code)))?;
+        self.page = Page::Assist;
+        self.show_page(Page::Assist)
+    }
+
+    fn save_server_settings(&mut self) -> Result<()> {
+        let input = self.find::<TextBox>("Origin")?.Text()?.to_string();
+        let input_network = self
+            .find_opt::<TextBox>("NetworkOrigin")
+            .map(|box_| box_.Text().unwrap_or_default().to_string())
+            .unwrap_or_default();
+        let effective = if input_network.is_empty() || input.is_empty() {
+            if input.is_empty() {
+                input_network
+            } else {
+                input
+            }
+        } else {
+            input
+        };
+        self.set_busy(true)?;
+        self.label("SettingsError", "正在连接并校验服务器…")?;
+        self.label("NetworkError", "正在连接并校验服务器…")?;
+        let manager = self.auth.manager();
+        let server_path = self.auth.server_path();
+        let events = self.sender();
+        thread::spawn(move || {
+            let result =
+                auth::probe_and_save_server(&manager, &server_path, &effective).map(|_| ());
+            events.send(Event::SaveServerFinished(result));
+        });
+        Ok(())
+    }
+
+    fn peer_advanced_visible(&self) -> bool {
+        self.find_opt::<StackPanel>("PeerAdvancedRow")
+            .and_then(|panel| panel.cast::<UIElement>().ok())
+            .and_then(|element| element.Visibility().ok())
+            .is_some_and(|v| v == Visibility::Visible)
     }
 
     fn start_login(&mut self) -> Result<()> {
@@ -311,7 +734,7 @@ impl App {
             return self.label("LoginError", "请先点击「服务器设置」连接并保存服务器地址。");
         }
         let email = self.find::<TextBox>("Email")?.Text()?.to_string();
-        let email = email.trim().to_owned();
+        let email = email.trim().to_string();
         if !email
             .split_once('@')
             .is_some_and(|(name, host)| !name.is_empty() && !host.is_empty())
@@ -329,7 +752,7 @@ impl App {
         self.label("LoginError", "正在登录…")?;
         let manager = self.auth.manager();
         let server_path = self.auth.server_path();
-        let events = self.events.clone();
+        let events = self.sender();
         thread::spawn(move || {
             events.send(Event::LoginFinished(auth::login(
                 &manager,
@@ -341,99 +764,613 @@ impl App {
         Ok(())
     }
 
-    fn open_desktop(&mut self, account: AccountSession) -> Result<()> {
+    fn do_logout(&mut self) -> Result<()> {
+        self.auth.stop_maintainer();
+        self.runtime.stop();
+        self.set_busy(true)?;
+        let manager = self.auth.manager();
+        let events = self.sender();
+        thread::spawn(move || {
+            events.send(Event::LogoutFinished(auth::logout(&manager)));
+        });
+        Ok(())
+    }
+
+    /// 登录成功（或恢复）后的主壳装配。
+    fn open_main(&mut self, account: &AccountSession) -> Result<()> {
         self.find::<PasswordBox>("Password")?.SetPassword("")?;
         self.label("LoginError", "")?;
-        self.label("Account", &account.email)?;
-        let formatted_id = account
-            .device_id
-            .as_deref()
-            .map(server_config::format_device_id)
-            .unwrap_or_else(|| "未分配设备码".to_string());
-        self.label("LocalDeviceId", &format!("本机：{formatted_id}"))?;
-        self.label("DesktopSize", &format!("{} × {}", self.width, self.height))?;
-        self.update_device_summary(account.device_id.as_deref(), &account.devices)?;
-        self.update_caption()?;
-        self.show("DesktopPage")?;
-        let panel: SwapChainPanel = self.find("Framebuffer")?;
-        let bounds: FrameworkElement = panel.cast()?;
-        bounds.SetWidth(self.width.into())?;
-        bounds.SetHeight(self.height.into())?;
-        let surface = Surface::new(&panel, self.width, self.height)?;
-        surface.present_idle()?;
-        self.surface = Some(surface);
+        self.label("AccountEmail", &account.email)?;
+        // 用登录响应携带的数据即时渲染首屏，REST 全量随后补齐。
+        self.devices = account.devices.clone();
+        if let Some(id) = account.device_id.clone() {
+            self.label("LocalIdText", &server_config::format_device_id(&id))?;
+        }
         self.logged_in = true;
-        let events = self.events.clone();
+        self.set_visible("LoginOverlay", false)?;
+        self.set_visible("MainShell", true)?;
+        self.apply_scale()?;
+        self.load_prefs_into_ui()?;
+        if let Err(err) = self.runtime.sync() {
+            self.label("AssistError", &format!("信令启动失败：{err}"))?;
+        }
+        self.render_devices()?;
+        self.render_history()?;
+        self.page = Page::Devices;
+        self.show_page(Page::Devices)?;
+        self.on_click(Action::RefreshDevices)?;
+        let events = self.sender();
         self.auth.start_maintainer(move |reason| {
-            events.send(Event::ReloginRequired(reason));
+            let _ = reason;
+            // 强制重登：后台维护线程回调，直接停运行时并回登录页。
+            events.send(Event::LogoutFinished(Err(String::new())));
         });
         Ok(())
     }
 
     fn return_to_login(&mut self, message: String) -> Result<()> {
         self.auth.stop_maintainer();
-        self.surface = None;
+        self.runtime.stop();
         self.logged_in = false;
-        self.label("LocalDeviceId", "")?;
-        self.label("DeviceSummary", "")?;
+        self.devices.clear();
+        self.online_override.clear();
+        self.set_visible("MainShell", false)?;
+        self.set_visible("LoginOverlay", true)?;
+        self.set_visible("LoginView", true)?;
+        self.set_visible("ServerSettingsView", false)?;
         self.label("LoginError", &message)?;
-        self.show("LoginPage")
+        self.set_busy(false)
     }
 
-    fn update_device_summary(
-        &self,
-        local_device_id: Option<&str>,
-        devices: &[MyDeviceInfo],
-    ) -> Result<()> {
+    fn apply_status(&mut self, snapshot: &ServerStatusSnapshot, generation: u64) -> Result<()> {
+        if generation != self.runtime.generation() || !self.logged_in {
+            return Ok(());
+        }
+        let online = snapshot.error_message.is_none() && snapshot.device_id.is_some();
+        let dot: Ellipse = self.find("StatusDot")?;
+        let color = if online {
+            windows::UI::Color {
+                A: 255,
+                R: 0x22,
+                G: 0xB5,
+                B: 0x73,
+            }
+        } else {
+            windows::UI::Color {
+                A: 255,
+                R: 0xB9,
+                G: 0xC4,
+                B: 0xD4,
+            }
+        };
+        let brush = windows::UI::Xaml::Media::SolidColorBrush::new()?;
+        brush.SetColor(color)?;
+        let shape: windows::UI::Xaml::Shapes::Shape = dot.cast()?;
+        shape.SetFill(&brush)?;
+        let state_text = match snapshot.error_message.as_deref() {
+            Some(message) => format!("信令：{message}"),
+            None if online => "信令在线".to_string(),
+            None => "信令连接中…".to_string(),
+        };
+        self.label("StatusText", &state_text)?;
+        if let Some(id) = snapshot.device_id.as_deref() {
+            self.label("LocalIdText", &server_config::format_device_id(id))?;
+            if online && self.online_override.get(id) != Some(&true) {
+                self.online_override.insert(id.to_string(), true);
+                self.render_devices()?;
+            }
+            if self.auth.server_config().cached_device_id.as_deref() != Some(id) {
+                let mut cfg = self.auth.server_config();
+                cfg.cached_device_id = Some(id.to_string());
+                if let Err(err) = server_config::save_to_path(&self.auth.server_path(), &cfg) {
+                    self.label("AssistError", &format!("保存设备码失败：{err}"))?;
+                }
+                self.auth.manager().update_server_config(cfg);
+            }
+        }
+        Ok(())
+    }
+
+    fn show_page(&mut self, page: Page) -> Result<()> {
+        self.set_visible("DevicesPage", page == Page::Devices)?;
+        self.set_visible("AssistPage", page == Page::Assist)?;
+        self.set_visible("FavoritesPage", page == Page::Favorites)?;
+        self.set_visible("SettingsPage", page == Page::Settings)?;
+        self.select_nav(page)?;
+        if page == Page::Favorites {
+            self.render_favorites()?;
+        }
+        if page == Page::Assist {
+            self.render_history()?;
+        }
+        if page == Page::Settings {
+            self.settings_tab_current()?;
+        }
+        Ok(())
+    }
+
+    fn select_nav(&self, page: Page) -> Result<()> {
+        for (name, target) in [
+            ("NavDevices", Page::Devices),
+            ("NavAssist", Page::Assist),
+            ("NavFavorites", Page::Favorites),
+            ("NavSettings", Page::Settings),
+        ] {
+            if let Some(button) = self.find_opt::<ToggleButton>(name) {
+                set_checked(&button, page == target)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn update_caption(&self) -> Result<()> {
+        let origin = settings::format_origin(&self.auth.server_config());
+        self.label("ServerCaption", &origin)?;
+        self.label("ServerOriginCaption", &origin)?;
+        Ok(())
+    }
+
+    fn settings_tab_current(&self) -> Result<()> {
+        let origin = settings::format_origin(&self.auth.server_config());
+        self.find::<TextBox>("NetworkOrigin")?
+            .SetText(HSTRING::from(&origin))?;
+        self.label("CurrentServerCaption", &format!("当前：{origin}"))
+    }
+
+    fn apply_settings_tab(&self, index: u8) -> Result<()> {
+        for (name, on) in [
+            ("TabGeneral", index == 0),
+            ("TabSecurity", index == 1),
+            ("TabNetwork", index == 2),
+        ] {
+            if let Some(tab) = self.find_opt::<ToggleButton>(name) {
+                set_checked(&tab, on)?;
+            }
+        }
+        self.set_visible("PanelGeneral", index == 0)?;
+        self.set_visible("PanelSecurity", index == 1)?;
+        self.set_visible("PanelNetwork", index == 2)?;
+        if index == 2 {
+            self.settings_tab_current()?;
+        }
+        Ok(())
+    }
+
+    fn load_prefs_into_ui(&mut self) -> Result<()> {
+        let prefs = self.prefs.lock().unwrap().clone();
+        let index = match prefs.bitrate_preset.as_str() {
+            "auto" => 0,
+            "8m" => 1,
+            "14m" => 2,
+            "30m" => 3,
+            _ => 1,
+        };
+        if let Some(combo) = self.find_opt::<ComboBox>("QualityBox") {
+            let selector: windows::UI::Xaml::Controls::Primitives::Selector = combo.cast()?;
+            selector.SetSelectedIndex(index)?;
+        }
+        if let Some(toggle) = self.find_opt::<ToggleSwitch>("HudToggle") {
+            toggle.SetIsOn(prefs.show_hud)?;
+        }
+        if let Some(toggle) = self.find_opt::<ToggleSwitch>("EncryptToggle") {
+            toggle.SetIsOn(prefs.default_encrypt_connection)?;
+        }
+        if let Some(toggle) = self.find_opt::<ToggleSwitch>("LockOnExitToggle") {
+            toggle.SetIsOn(prefs.lock_on_exit)?;
+        }
+        if let Some(toggle) = self.find_opt::<ToggleSwitch>("AssistToggle") {
+            toggle.SetIsOn(true)?;
+        }
         self.label(
-            "DeviceSummary",
-            &format_device_summary(local_device_id, devices),
-        )
+            "VersionText",
+            &format!("版本 {}", env!("CARGO_PKG_VERSION")),
+        )?;
+        Ok(())
+    }
+
+    fn save_prefs_patch(
+        &mut self,
+        apply: impl FnOnce(&mut AppPrefs) -> std::result::Result<(), String>,
+    ) -> Result<()> {
+        let mut prefs = self.prefs.lock().unwrap();
+        if let Err(err) = apply(&mut prefs) {
+            self.label("AssistError", &format!("保存设置失败：{err}"))?;
+            return Ok(());
+        }
+        let path = app_prefs::default_prefs_path();
+        if let Err(err) = app_prefs::save_to_path(&path, &prefs) {
+            self.label("AssistError", &format!("写入设置失败：{err}"))?;
+        }
+        Ok(())
+    }
+
+    fn persist_history(&self) -> Result<()> {
+        let path = history::default_history_path();
+        let result = self.history.lock().unwrap().save_to(&path);
+        if let Err(err) = result {
+            self.label("AssistError", &err)?;
+        }
+        Ok(())
+    }
+
+    fn device_name_of(&self, device: &MyDeviceInfo) -> String {
+        let alias = device.alias.trim();
+        if !alias.is_empty() {
+            alias.to_string()
+        } else {
+            let host = device.hostname.trim();
+            if host.is_empty() {
+                device.device_id.clone()
+            } else {
+                host.to_string()
+            }
+        }
+    }
+
+    fn render_devices(&mut self) -> Result<()> {
+        let local_id = self.auth.server_config().cached_device_id.clone();
+        let host: StackPanel = self.find("DeviceListHost")?;
+        let children = panel_children(&host)?;
+        children.Clear()?;
+        let empty = self.devices.is_empty();
+        self.set_visible("DevicesEmpty", empty)?;
+        let rows = self.build_device_rows(&local_id)?;
+        for row in rows {
+            children.Append(&as_ui_element(&row)?)?;
+        }
+        Ok(())
+    }
+
+    fn build_device_rows(&self, local_id: &Option<String>) -> Result<Vec<FrameworkElement>> {
+        let mut rows = Vec::new();
+        for device in &self.devices {
+            let is_local = local_id.as_deref() == Some(device.device_id.as_str());
+            let name = self.device_name_of(device);
+            let online = self
+                .online_override
+                .get(&device.device_id)
+                .copied()
+                .unwrap_or(device.online);
+            let lan = self.lan_codes.contains(&device.device_id);
+            let row = widgets::load_device_row()?;
+            let name_text: TextBlock = row.FindName("RowName")?.cast()?;
+            name_text.SetText(HSTRING::from(&name))?;
+            let code_text: TextBlock = row.FindName("RowCode")?.cast()?;
+            code_text.SetText(HSTRING::from(&server_config::format_device_id(
+                &device.device_id,
+            )))?;
+            widgets::set_device_online(&row, online, lan, is_local)?;
+            {
+                let sender = self.sender();
+                let button: ButtonBase = row.FindName("RowConnect")?.cast()?;
+                let id = device.device_id.clone();
+                button.Click(RoutedEventHandler::new(move |_, _| {
+                    sender.send(Event::Click(Action::DeviceConnect(id.clone())));
+                    Ok(())
+                }))?;
+            }
+            {
+                let sender = self.sender();
+                let item = widgets::find_menu_item(&row, "RowFavItem")?;
+                let favorite = self.history.lock().unwrap().is_favorite(&device.device_id);
+                item.SetText(HSTRING::from(if favorite {
+                    "取消收藏"
+                } else {
+                    "收藏"
+                }))?;
+                let id = device.device_id.clone();
+                item.Click(RoutedEventHandler::new(move |_, _| {
+                    sender.send(Event::Click(Action::DeviceToggleFav(id.clone())));
+                    Ok(())
+                }))?;
+            }
+            {
+                let sender = self.sender();
+                let item = widgets::find_menu_item(&row, "RowRenameItem")?;
+                let id = device.device_id.clone();
+                item.Click(RoutedEventHandler::new(move |_, _| {
+                    sender.send(Event::Click(Action::DeviceRename(id.clone())));
+                    Ok(())
+                }))?;
+            }
+            {
+                let sender = self.sender();
+                let item = widgets::find_menu_item(&row, "RowUnbindItem")?;
+                let id = device.device_id.clone();
+                item.Click(RoutedEventHandler::new(move |_, _| {
+                    sender.send(Event::Click(Action::DeviceUnbind(id.clone())));
+                    Ok(())
+                }))?;
+            }
+            rows.push(row);
+        }
+        Ok(rows)
+    }
+
+    fn render_history(&mut self) -> Result<()> {
+        if let Some(recent_tab) = self.find_opt::<ToggleButton>("HistoryTabRecent") {
+            set_checked(&recent_tab, !self.history_tab_fav)?;
+        }
+        if let Some(fav_tab) = self.find_opt::<ToggleButton>("HistoryTabFav") {
+            set_checked(&fav_tab, self.history_tab_fav)?;
+        }
+        let host: StackPanel = self.find("HistoryListHost")?;
+        let children = panel_children(&host)?;
+        children.Clear()?;
+        let snapshot = self.history.lock().unwrap().clone();
+        if self.history_tab_fav {
+            let favorites = snapshot.favorites().to_vec();
+            self.set_visible("HistoryEmpty", favorites.is_empty())?;
+            for device_id in favorites {
+                let name = self
+                    .devices
+                    .iter()
+                    .find(|d| d.device_id == device_id)
+                    .map(|d| self.device_name_of(d))
+                    .unwrap_or_else(|| "未知设备".to_string());
+                let row = self.recent_row(&device_id, &name, "")?;
+                children.Append(&as_ui_element(&row)?)?;
+            }
+        } else {
+            let recents = snapshot.recents().to_vec();
+            self.set_visible("HistoryEmpty", recents.is_empty())?;
+            for record in recents {
+                let row = self.recent_row(
+                    &record.device_id,
+                    &record.name,
+                    &relative_time(record.last_connected_at_sec),
+                )?;
+                children.Append(&as_ui_element(&row)?)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn recent_row(&self, device_id: &str, name: &str, when: &str) -> Result<FrameworkElement> {
+        let row = widgets::load_recent_row()?;
+        let name_text: TextBlock = row.FindName("RowName")?.cast()?;
+        name_text.SetText(HSTRING::from(name))?;
+        let code_text: TextBlock = row.FindName("RowCode")?.cast()?;
+        code_text.SetText(HSTRING::from(&server_config::format_device_id(device_id)))?;
+        let when_text: TextBlock = row.FindName("RowWhen")?.cast()?;
+        when_text.SetText(HSTRING::from(when))?;
+        {
+            let sender = self.sender();
+            let button: ButtonBase = row.FindName("RowConnect")?.cast()?;
+            let id = device_id.to_string();
+            button.Click(RoutedEventHandler::new(move |_, _| {
+                sender.send(Event::Click(Action::RecentConnect(id.clone())));
+                Ok(())
+            }))?;
+        }
+        {
+            let sender = self.sender();
+            let button: ButtonBase = row.FindName("RowDelete")?.cast()?;
+            let id = device_id.to_string();
+            button.Click(RoutedEventHandler::new(move |_, _| {
+                sender.send(Event::Click(Action::RecentDelete(id.clone())));
+                Ok(())
+            }))?;
+        }
+        Ok(row)
+    }
+
+    fn render_favorites(&mut self) -> Result<()> {
+        let host: StackPanel = self.find("FavoritesListHost")?;
+        let children = panel_children(&host)?;
+        children.Clear()?;
+        let snapshot = self.history.lock().unwrap().clone();
+        let favorites = snapshot.favorites().to_vec();
+        self.set_visible("FavoritesEmpty", favorites.is_empty())?;
+        for device_id in favorites {
+            let name = self
+                .devices
+                .iter()
+                .find(|d| d.device_id == device_id)
+                .map(|d| self.device_name_of(d))
+                .unwrap_or_else(|| "未知设备".to_string());
+            let row = widgets::load_device_row()?;
+            let name_text: TextBlock = row.FindName("RowName")?.cast()?;
+            name_text.SetText(HSTRING::from(&name))?;
+            let code_text: TextBlock = row.FindName("RowCode")?.cast()?;
+            code_text.SetText(HSTRING::from(&server_config::format_device_id(&device_id)))?;
+            widgets::set_device_online(&row, false, false, false)?;
+            {
+                let sender = self.sender();
+                let button: ButtonBase = row.FindName("RowConnect")?.cast()?;
+                let id = device_id.clone();
+                button.Click(RoutedEventHandler::new(move |_, _| {
+                    sender.send(Event::Click(Action::DeviceConnect(id.clone())));
+                    Ok(())
+                }))?;
+            }
+            {
+                let sender = self.sender();
+                let item = widgets::find_menu_item(&row, "RowFavItem")?;
+                let id = device_id.clone();
+                item.Click(RoutedEventHandler::new(move |_, _| {
+                    sender.send(Event::Click(Action::DeviceToggleFav(id.clone())));
+                    Ok(())
+                }))?;
+            }
+            if let Ok(rename_item) = widgets::find_menu_item(&row, "RowRenameItem") {
+                as_ui_element(&rename_item)?.SetVisibility(Visibility::Collapsed)?;
+            }
+            if let Ok(unbind_item) = widgets::find_menu_item(&row, "RowUnbindItem") {
+                as_ui_element(&unbind_item)?.SetVisibility(Visibility::Collapsed)?;
+            }
+            children.Append(&as_ui_element(&row)?)?;
+        }
+        Ok(())
+    }
+
+    /// 根布局等比缩放：DPI × 小屏适配系数，布局坐标系始终是 1000×660。
+    fn apply_scale(&mut self) -> Result<()> {
+        let dpi = unsafe { GetDpiForWindow(self.hwnd) };
+        self.last_dpi = dpi;
+        let fit = work_area_fit(self.hwnd);
+        let scale = dpi as f64 / 96.0 * fit;
+        let Some(grid) = self.find_opt::<windows::UI::Xaml::Controls::Grid>("RootLayout") else {
+            return Ok(());
+        };
+        let scale_transform = ScaleTransform::new()?;
+        scale_transform.SetScaleX(scale)?;
+        scale_transform.SetScaleY(scale)?;
+        let group = TransformGroup::new()?;
+        let as_transform: Transform = scale_transform.cast()?;
+        group.Children()?.Append(&as_transform)?;
+        let as_group_transform: Transform = group.cast()?;
+        let as_element: UIElement = grid.cast()?;
+        as_element.SetRenderTransform(&as_group_transform)?;
+        Ok(())
     }
 }
 
-fn format_device_summary(local_device_id: Option<&str>, devices: &[MyDeviceInfo]) -> String {
-    if devices.is_empty() {
-        return "账号下暂无已绑定设备记录".to_string();
+/// 工作区小于设计基准时的等比缩小系数（≤1.0）。
+fn work_area_fit(hwnd: windows::Win32::Foundation::HWND) -> f64 {
+    let Some((left, top, right, bottom)) = shell::work_area(hwnd) else {
+        return 1.0;
+    };
+    let work_w = (right - left) as f64;
+    let work_h = (bottom - top) as f64;
+    (work_w / DESIGN_WIDTH).min(work_h / DESIGN_HEIGHT).min(1.0)
+}
+
+fn install_styles() -> Result<()> {
+    let dict = XamlReader::Load(include_str!("styles.xaml"))?
+        .cast::<windows::UI::Xaml::ResourceDictionary>()?;
+    let app = Application::Current()?;
+    app.Resources()?.MergedDictionaries()?.Append(&dict)?;
+    Ok(())
+}
+
+/// 仅保留数字（9 位码输入归一化）。
+fn digit_of(text: &str) -> String {
+    text.chars().filter(|c| c.is_ascii_digit()).collect()
+}
+
+fn copy_to_clipboard(text: &str) {
+    use windows::ApplicationModel::DataTransfer::{Clipboard, DataPackage};
+    let package = DataPackage::new().expect("创建剪贴板数据包");
+    package
+        .SetText(HSTRING::from(text))
+        .expect("填充剪贴板文本");
+    let _ = Clipboard::SetContent(&package);
+}
+
+fn relative_time(at_sec: u64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(at_sec);
+    let delta = now.saturating_sub(at_sec);
+    match delta {
+        0..=59 => "刚刚".to_string(),
+        60..=3599 => format!("{} 分钟前", delta / 60),
+        3600..=86399 => format!("{} 小时前", delta / 3600),
+        _ => format!("{} 天前", delta / 86400),
     }
-    let online_count = devices.iter().filter(|d| d.online).count();
-    let preview = devices
-        .iter()
-        .take(4)
-        .map(|d| {
-            let name = if !d.alias.trim().is_empty() {
-                d.alias.trim()
-            } else if !d.hostname.trim().is_empty() {
-                d.hostname.trim()
-            } else {
-                d.device_id.as_str()
-            };
-            let code = if d.formatted_id.trim().is_empty() {
-                server_config::format_device_id(&d.device_id)
-            } else {
-                d.formatted_id.clone()
-            };
-            let local_tag = if local_device_id.is_some_and(|local| local == d.device_id) {
-                " [本机]"
-            } else {
-                ""
-            };
-            let state = if d.online { "在线" } else { "离线" };
-            format!("{name}（{code}{local_tag}·{state}）")
-        })
-        .collect::<Vec<_>>()
-        .join(" / ");
-    if devices.len() > 4 {
-        format!(
-            "已绑定 {} 台设备（{} 台在线）：{preview} 等",
-            devices.len(),
-            online_count
-        )
-    } else {
-        format!(
-            "已绑定 {} 台设备（{} 台在线）：{preview}",
-            devices.len(),
-            online_count
-        )
+}
+
+/// 输入对话框占位（M1 收尾实现自绘 ContentDialog）。
+fn prompt_text(_title: &str) -> Option<String> {
+    None
+}
+
+/// StackPanel.Children 经 Panel 接口访问（0.37 投影返回 UIElementCollection）。
+fn panel_children(panel: &StackPanel) -> Result<windows::UI::Xaml::Controls::UIElementCollection> {
+    let as_panel: windows::UI::Xaml::Controls::Panel = panel.cast()?;
+    as_panel.Children()
+}
+
+/// 0.37 投影下把任意元素降为 UIElement 便于集合追加。
+fn as_ui_element<T: Interface>(element: &T) -> Result<UIElement> {
+    element.cast()
+}
+
+/// ToggleButton.IsChecked 需要 IReference<bool>，0.37 投影经 PropertyValue 包装。
+fn set_checked(toggle: &ToggleButton, on: bool) -> Result<()> {
+    let value = windows::Foundation::PropertyValue::CreateBoolean(on)?;
+    let reference: windows::Foundation::IReference<bool> = value.cast()?;
+    toggle.SetIsChecked(&reference)
+}
+
+#[cfg(test)]
+mod parse_smoke_tests {
+    use super::*;
+
+    #[test]
+    #[ignore] // 实机诊断用：cargo test -p rc-ui parse_smoke -- --ignored
+    fn parse_smoke() {
+        let shell_init = unsafe {
+            windows::Win32::System::WinRT::RoInitialize(
+                windows::Win32::System::WinRT::RO_INIT_SINGLETHREADED,
+            )
+        };
+        let _ = shell_init;
+        let manager = windows::UI::Xaml::Hosting::WindowsXamlManager::InitializeForCurrentThread();
+        println!("islands init: {:?}", manager.as_ref().map(|_| "ok"));
+        println!(
+            "styles parse: {:?}",
+            XamlReader::Load(include_str!("styles.xaml"))
+                .map(|_| "ok".to_string())
+                .map_err(|e| e.to_string())
+        );
+        if let Ok(app) = Application::Current() {
+            let parsed = XamlReader::Load(include_str!("styles.xaml"));
+            println!("styles dict parse ok for merge");
+            if let Ok(dict) = parsed.and_then(|d| d.cast::<windows::UI::Xaml::ResourceDictionary>())
+            {
+                let merged = app.Resources().and_then(|r| r.MergedDictionaries());
+                match merged {
+                    Ok(v) => println!("merge: {:?}", v.Append(dict).map(|_| "ok".to_string())),
+                    Err(e) => println!("merged-dicts err: {e}"),
+                }
+            }
+        }
+        let view = XamlReader::Load(include_str!("view.xaml"));
+        println!(
+            "view parse: {:?}",
+            view.as_ref()
+                .map(|_| "ok".to_string())
+                .map_err(|e| e.to_string())
+        );
+        let row = XamlReader::Load(crate::widgets::DEVICE_ROW_XAML_STR);
+        println!(
+            "row[device]: {:?}",
+            row.as_ref()
+                .map(|_| "ok".to_string())
+                .map_err(|e| e.to_string())
+        );
+        let recent = XamlReader::Load(crate::widgets::RECENT_ROW_XAML_STR);
+        println!(
+            "row[recent]: {:?}",
+            recent
+                .as_ref()
+                .map(|_| "ok".to_string())
+                .map_err(|e| e.to_string())
+        );
+        const NS: &str = "xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\"";
+        let variants: Vec<(&str, String)> = vec![
+            ("b-rowlocal", format!("<Border {NS} x:Name=\"RowLocal\" Background=\"#EDF2FF\" CornerRadius=\"4\" Padding=\"6,1\" Visibility=\"Collapsed\"/>")),
+            ("b-plain", format!("<Border {NS} Background=\"#EDF2FF\"/>")),
+            ("t-benji", format!("<TextBlock {NS} Text=\"本机\"/>")),
+            ("e-ge7f4", format!("<FontIcon {NS} Glyph=\"&#xE7F4;\"/>")),
+            ("e-ge712", format!("<FontIcon {NS} Glyph=\"&#xE712;\"/>")),
+            ("e-ge8c8", format!("<FontIcon {NS} Glyph=\"&#xE8C8;\"/>")),
+            ("e-e74d", format!("<FontIcon {NS} Glyph=\"&#xE74D;\"/>")),
+            ("flyout", format!("<Button {NS} Content=\"&#xE712;\"><Button.Flyout><MenuFlyout><MenuFlyoutItem x:Name=\"A\" Text=\"x\"/></MenuFlyout></Button.Flyout></Button>")),
+            ("sp-rows", format!("<StackPanel {NS} Spacing=\"8\"/>")),
+        ];
+        for (name, text) in variants {
+            let result = XamlReader::Load(text.as_str());
+            println!(
+                "min[{name}]: {:?}",
+                result
+                    .as_ref()
+                    .map(|_| "ok".to_string())
+                    .map_err(|e| e.to_string())
+            );
+        }
     }
 }

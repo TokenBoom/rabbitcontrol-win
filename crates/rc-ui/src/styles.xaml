@@ -1,0 +1,141 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!--
+    RabbitControl 设计 tokens（全应用唯一来源；会话窗口复用同一字典）。
+    版式：Caption 12 / Body 14 / Subtitle 16 / Title 20 / Display 28。
+    圆角：6（控件）/ 10（卡片）。间距节奏：4/8/12/16/24。
+  -->
+
+  <!-- 色板 -->
+  <SolidColorBrush x:Key="PrimaryBrush" Color="#346CFF"/>
+  <SolidColorBrush x:Key="PrimaryHoverBrush" Color="#2A5BE6"/>
+  <SolidColorBrush x:Key="PrimaryPressedBrush" Color="#244DC4"/>
+  <SolidColorBrush x:Key="TextPrimaryBrush" Color="#151E31"/>
+  <SolidColorBrush x:Key="TextSecondaryBrush" Color="#516278"/>
+  <SolidColorBrush x:Key="TextTertiaryBrush" Color="#68768D"/>
+  <SolidColorBrush x:Key="TextOnPrimaryBrush" Color="#FFFFFF"/>
+  <SolidColorBrush x:Key="DividerBrush" Color="#E3EAF3"/>
+  <SolidColorBrush x:Key="PageBackgroundBrush" Color="#F6F8FB"/>
+  <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FFFFFF"/>
+  <SolidColorBrush x:Key="CardBorderBrush" Color="#E8EEF6"/>
+  <SolidColorBrush x:Key="SidebarBackgroundBrush" Color="#FFFFFF"/>
+  <SolidColorBrush x:Key="DangerBrush" Color="#A93838"/>
+  <SolidColorBrush x:Key="SuccessBrush" Color="#12A150"/>
+  <SolidColorBrush x:Key="OnlineBrush" Color="#22B573"/>
+  <SolidColorBrush x:Key="OfflineBrush" Color="#B9C4D4"/>
+  <SolidColorBrush x:Key="FieldBorderBrush" Color="#BBC8D9"/>
+  <LinearGradientBrush x:Key="BannerGradient" StartPoint="0,0" EndPoint="1,1">
+    <GradientStop Color="#3B7BFF" Offset="0"/>
+    <GradientStop Color="#2E63E6" Offset="1"/>
+  </LinearGradientBrush>
+  <LinearGradientBrush x:Key="LoginBackdrop" StartPoint="0,0" EndPoint="1,0.4">
+    <GradientStop Color="#D7F3FF" Offset="0"/>
+    <GradientStop Color="#E0EEFF" Offset="0.52"/>
+    <GradientStop Color="#E9E4FF" Offset="1"/>
+  </LinearGradientBrush>
+
+  <!-- 字阶 -->
+  <Style x:Key="CaptionText" TargetType="TextBlock">
+    <Setter Property="FontSize" Value="12"/>
+    <Setter Property="Foreground" Value="{ThemeResource TextTertiaryBrush}"/>
+  </Style>
+  <Style x:Key="BodyText" TargetType="TextBlock">
+    <Setter Property="FontSize" Value="14"/>
+    <Setter Property="Foreground" Value="{ThemeResource TextPrimaryBrush}"/>
+  </Style>
+  <Style x:Key="SubtitleText" TargetType="TextBlock">
+    <Setter Property="FontSize" Value="16"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="Foreground" Value="{ThemeResource TextPrimaryBrush}"/>
+  </Style>
+  <Style x:Key="TitleText" TargetType="TextBlock">
+    <Setter Property="FontSize" Value="20"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="Foreground" Value="{ThemeResource TextPrimaryBrush}"/>
+  </Style>
+  <Style x:Key="DisplayText" TargetType="TextBlock">
+    <Setter Property="FontSize" Value="28"/>
+    <Setter Property="FontWeight" Value="Bold"/>
+    <Setter Property="Foreground" Value="{ThemeResource TextPrimaryBrush}"/>
+  </Style>
+  <Style x:Key="FieldLabel" TargetType="TextBlock">
+    <Setter Property="FontSize" Value="13"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="Foreground" Value="{ThemeResource TextSecondaryBrush}"/>
+  </Style>
+
+  <!-- 按钮 -->
+  <Style x:Key="PrimaryButton" TargetType="Button">
+    <Setter Property="Height" Value="40"/>
+    <Setter Property="Padding" Value="20,0"/>
+    <Setter Property="CornerRadius" Value="6"/>
+    <Setter Property="Background" Value="{ThemeResource PrimaryBrush}"/>
+    <Setter Property="Foreground" Value="{ThemeResource TextOnPrimaryBrush}"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+  </Style>
+  <Style x:Key="SecondaryButton" TargetType="Button">
+    <Setter Property="Height" Value="36"/>
+    <Setter Property="Padding" Value="16,0"/>
+    <Setter Property="CornerRadius" Value="6"/>
+    <Setter Property="Background" Value="{ThemeResource CardBackgroundBrush}"/>
+    <Setter Property="Foreground" Value="{ThemeResource TextPrimaryBrush}"/>
+    <Setter Property="BorderBrush" Value="{ThemeResource FieldBorderBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+  </Style>
+  <Style x:Key="LinkButton" TargetType="Button">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="Foreground" Value="#385CC3"/>
+    <Setter Property="Padding" Value="8,4"/>
+    <Setter Property="FontSize" Value="13"/>
+  </Style>
+  <Style x:Key="CaptionButton" TargetType="Button">
+    <Setter Property="Width" Value="46"/>
+    <Setter Property="Height" Value="36"/>
+    <Setter Property="Padding" Value="0"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Foreground" Value="#45526C"/>
+    <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+    <Setter Property="FontSize" Value="10"/>
+  </Style>
+
+  <!-- 导航项：左侧栏条目（选中由视觉状态呈现） -->
+  <Style x:Key="NavItem" TargetType="ToggleButton">
+    <Setter Property="Height" Value="44"/>
+    <Setter Property="Margin" Value="12,2"/>
+    <Setter Property="Padding" Value="14,0"/>
+    <Setter Property="CornerRadius" Value="8"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="HorizontalAlignment" Value="Stretch"/>
+    <Setter Property="HorizontalContentAlignment" Value="Left"/>
+  </Style>
+
+  <!-- 卡片 -->
+  <Style x:Key="CardBorder" TargetType="Border">
+    <Setter Property="Background" Value="{ThemeResource CardBackgroundBrush}"/>
+    <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="10"/>
+    <Setter Property="Padding" Value="20"/>
+  </Style>
+
+  <!-- 行式设置条目容器（UU 设置页形态） -->
+  <Style x:Key="SettingRowBorder" TargetType="Border">
+    <Setter Property="Background" Value="{ThemeResource CardBackgroundBrush}"/>
+    <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="10"/>
+    <Setter Property="Padding" Value="16,14"/>
+    <Setter Property="Margin" Value="0,0,0,10"/>
+  </Style>
+
+  <!-- 徽章（在线态/标签 chip） -->
+  <Style x:Key="BadgeBorder" TargetType="Border">
+    <Setter Property="CornerRadius" Value="4"/>
+    <Setter Property="Padding" Value="6,2"/>
+  </Style>
+</ResourceDictionary>
