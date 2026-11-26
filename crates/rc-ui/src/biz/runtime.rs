@@ -96,6 +96,8 @@ impl SignalRuntime {
                 token_refresher: Some(token_refresher),
                 device_pubkey,
                 allow_remote_assist: true,
+                // v0.1.23 双权限模型：同账号控制与远程协助分开开关。
+                allow_remote_control: Some(true),
                 dynamic_lan_discovery: true,
             },
             |_| {},
