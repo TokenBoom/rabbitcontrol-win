@@ -17,6 +17,7 @@ embed-resource = "2.5"
 
 [dependencies]
 rc-platform-win = { path = "../rc-platform-win" }
+rc-d3d11 = { path = "../rc-d3d11" }
 rc-client-core.workspace = true
 rc-session.workspace = true
 rc-input.workspace = true
@@ -24,6 +25,14 @@ rc-types.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 # 0.37 is the last windows-rs release with the inbox Windows.UI.Xaml projections.
+# 会话渲染表面（SharedDevice DXGI / ISwapChainPanelNative）走 0.58 世界，与 0.37 并存
+windows58 = { package = "windows", version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_System_WinRT",
+] }
 windows = { version = "0.37", features = [
     "alloc", "ApplicationModel_DataTransfer", "Foundation", "Foundation_Collections", "Storage_Streams", "System", "UI_Composition", "UI_ViewManagement", "UI_Xaml_Controls_Primitives", "UI_Xaml_Hosting", "UI_Xaml_Markup", "UI_Xaml_Input", "UI_Xaml_Media", "UI_Xaml_Media_Imaging", "UI_Xaml_Shapes",
     "Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11",

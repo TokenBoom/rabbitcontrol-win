@@ -302,6 +302,26 @@ impl App {
                 }),
             )?;
         }
+        // 会话舞台尺寸变化 → StageRect（渲染器 letterbox 基准，物理像素）
+        {
+            let sender = self.sender();
+            let hwnd = self.hwnd;
+            let panel: SwapChainPanel = self.root.FindName("SessionPanel")?.cast()?;
+            let panel_fe: windows::UI::Xaml::FrameworkElement = panel.cast()?;
+            panel_fe.SizeChanged(windows::UI::Xaml::SizeChangedEventHandler::new(
+                move |_, args| {
+                    if let Some(args) = args {
+                        let scale = unsafe { GetDpiForWindow(hwnd) } as f64 / 96.0;
+                        let size = args.NewSize()?;
+                        let w = (size.Width as f64 * scale).round().max(1.0) as u32;
+                        let h = (size.Height as f64 * scale).round().max(1.0) as u32;
+                        let sender = sender.clone();
+                        sender.send(Event::Click(Action::StageRectChanged(w, h)));
+                    }
+                    Ok(())
+                },
+            ))?;
+        }
         // M3.3 鼠标模式下拉
         {
             let sender = self.sender();
@@ -908,6 +928,17 @@ impl App {
             }
             Action::MouseModeChanged => {
                 self.on_mouse_mode_changed()?;
+                Ok(())
+            }
+            Action::StageRectChanged(width, height) => {
+                if let Some(active) = self.session.as_ref() {
+                    active
+                        .handle
+                        .send(rc_client_core::session_bridge::SessionCommand::StageRect {
+                            width,
+                            height,
+                        });
+                }
                 Ok(())
             }
             Action::DeviceToggleFav(device_id) => {

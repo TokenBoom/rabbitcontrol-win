@@ -52,6 +52,7 @@ pub(crate) enum Action {
     SessionQualityToggle,
     StreamQualityChanged,
     MouseModeChanged,
+    StageRectChanged(u32, u32),
 }
 
 pub(crate) enum Event {
