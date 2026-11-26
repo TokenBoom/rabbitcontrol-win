@@ -14,8 +14,8 @@
       <TextBlock x:Name="AppTitle" Text="RabbitControl" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextSecondaryBrush}"/>
     </StackPanel>
     <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
-      <Button x:Name="Minimize" AutomationProperties.Name="最小化" Content="&#xE921;" Style="{StaticResource CaptionButton}"/>
-      <Button x:Name="CloseWindow" AutomationProperties.Name="关闭" Content="&#xE8BB;" Style="{StaticResource CaptionButton}"/>
+      <Button x:Name="Minimize" AutomationProperties.Name="最小化" Content="&#xE921;" Style="{StaticResource CaptionButton}" Width="48" Height="48"/>
+      <Button x:Name="CloseWindow" AutomationProperties.Name="关闭" Content="&#xE8BB;" Style="{StaticResource CaptionButton}" Width="48" Height="48"/>
     </StackPanel>
   </Grid>
 
@@ -36,9 +36,7 @@
           <RowDefinition Height="Auto"/>
           <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <StackPanel Margin="12,14,12,10">
-          <TextBlock Text="导航" Style="{StaticResource CaptionText}" Margin="14,0,0,6"/>
-        </StackPanel>
+
         <StackPanel Grid.Row="1" Spacing="2">
           <ToggleButton x:Name="NavDevices" Style="{StaticResource NavItem}">
             <StackPanel Orientation="Horizontal" Spacing="12">
@@ -65,20 +63,18 @@
             </StackPanel>
           </ToggleButton>
         </StackPanel>
-        <StackPanel Grid.Row="3" Margin="14,0,14,10" Spacing="6">
-          <StackPanel Orientation="Horizontal" Spacing="6">
-            <Ellipse x:Name="StatusDot" Width="8" Height="8" Fill="{ThemeResource OfflineBrush}" VerticalAlignment="Center"/>
-            <TextBlock x:Name="StatusText" Text="信令未连接" Style="{StaticResource CaptionText}"/>
-          </StackPanel>
-        </StackPanel>
-        <Border Grid.Row="4" BorderBrush="{ThemeResource DividerBrush}" BorderThickness="0,1,0,0" Padding="14,10">
+        <!-- 设置（UU 底部入口） -->
+        <Border Grid.Row="3" BorderBrush="{ThemeResource DividerBrush}" BorderThickness="0,1,0,0" Padding="14,10">
           <Grid>
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="*"/>
               <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBlock x:Name="AccountEmail" MaxWidth="110" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Style="{StaticResource CaptionText}" Foreground="{ThemeResource TextSecondaryBrush}"/>
-            <Button x:Name="LogoutButton" Content="退出" Style="{StaticResource LinkButton}" Grid.Column="1"/>
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE713;" FontSize="16" Foreground="{ThemeResource TextSecondaryBrush}"/>
+              <TextBlock x:Name="StatusText" Text="信令未连接" Style="{StaticResource CaptionText}" VerticalAlignment="Center"/>
+            </StackPanel>
+            <Button x:Name="LogoutButton" Content="退出" Style="{StaticResource LinkButton}" Grid.Column="1" VerticalAlignment="Center"/>
           </Grid>
         </Border>
       </Grid>

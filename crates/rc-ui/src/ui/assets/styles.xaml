@@ -92,8 +92,8 @@
     <Setter Property="FontSize" Value="13"/>
   </Style>
   <Style x:Key="CaptionButton" TargetType="Button">
-    <Setter Property="Width" Value="46"/>
-    <Setter Property="Height" Value="36"/>
+    <Setter Property="Width" Value="48"/>
+    <Setter Property="Height" Value="48"/>
     <Setter Property="Padding" Value="0"/>
     <Setter Property="BorderThickness" Value="0"/>
     <Setter Property="Background" Value="Transparent"/>
@@ -102,16 +102,18 @@
     <Setter Property="FontSize" Value="10"/>
   </Style>
 
-  <!-- 导航项：左侧栏条目（选中由视觉状态呈现） -->
+  <!-- 导航项：UU 风格，选中态浅蓝底 + 左侧蓝色竖条 -->
   <Style x:Key="NavItem" TargetType="ToggleButton">
-    <Setter Property="Height" Value="44"/>
-    <Setter Property="Margin" Value="12,2"/>
-    <Setter Property="Padding" Value="14,0"/>
-    <Setter Property="CornerRadius" Value="8"/>
+    <Setter Property="Height" Value="40"/>
+    <Setter Property="Margin" Value="8,1"/>
+    <Setter Property="Padding" Value="12,0"/>
+    <Setter Property="CornerRadius" Value="6"/>
     <Setter Property="Background" Value="Transparent"/>
     <Setter Property="BorderThickness" Value="0"/>
     <Setter Property="HorizontalAlignment" Value="Stretch"/>
     <Setter Property="HorizontalContentAlignment" Value="Left"/>
+    <Setter Property="FontSize" Value="13"/>
+    <Setter Property="Foreground" Value="{ThemeResource TextSecondaryBrush}"/>
   </Style>
 
   <!-- 卡片 -->
@@ -119,7 +121,7 @@
     <Setter Property="Background" Value="{ThemeResource CardBackgroundBrush}"/>
     <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
     <Setter Property="BorderThickness" Value="1"/>
-    <Setter Property="CornerRadius" Value="10"/>
+    <Setter Property="CornerRadius" Value="12"/>
     <Setter Property="Padding" Value="20"/>
   </Style>
 
