@@ -16,6 +16,12 @@
         </Border>
       </StackPanel>
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" VerticalAlignment="Center">
+        <Button x:Name="ToolToggle" Style="{StaticResource SecondaryButton}" Height="32" AutomationProperties.Name="工具面板">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE90F;" FontSize="13"/>
+            <TextBlock Text="工具" Style="{StaticResource BodyText}"/>
+          </StackPanel>
+        </Button>
         <Button x:Name="SessionFullscreen" Style="{StaticResource SecondaryButton}" Height="32" AutomationProperties.Name="全屏">
           <StackPanel Orientation="Horizontal" Spacing="6">
             <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE740;" FontSize="13"/>
@@ -55,7 +61,86 @@
       <ComboBox x:Name="StreamDisplayBox" Width="170" MinHeight="30" FontSize="12" Visibility="Collapsed"/>
     </StackPanel>
   </Border>
-  <Grid Grid.Row="2" x:Name="SessionStage">
+  <Grid Grid.Row="2">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="Auto"/>
+      <ColumnDefinition Width="*"/>
+    </Grid.ColumnDefinitions>
+    <!-- M4 工具面板（终端/文件/端口映射；ToolToggle 切换显隐） -->
+    <Border x:Name="ToolPanel" Visibility="Collapsed" Width="340" BorderBrush="{ThemeResource DividerBrush}" BorderThickness="0,0,1,0" Background="#141D27">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <StackPanel Orientation="Horizontal" Spacing="4" Margin="10,8">
+          <ToggleButton x:Name="ToolTabTerminal" Content="终端" Style="{StaticResource NavItem}" Width="100" IsChecked="True"/>
+          <ToggleButton x:Name="ToolTabFiles" Content="文件" Style="{StaticResource NavItem}" Width="100"/>
+          <ToggleButton x:Name="ToolTabPortmap" Content="端口" Style="{StaticResource NavItem}" Width="100"/>
+        </StackPanel>
+        <!-- 终端 -->
+        <Grid x:Name="TerminalPane" Grid.Row="1" Margin="10,0,10,10">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <ScrollViewer x:Name="TerminalScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <TextBox x:Name="TerminalOutput" IsReadOnly="True" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12"
+                     Foreground="#C9D8E8" Background="#0D1620" BorderThickness="0" IsHitTestVisible="False"
+                     MinHeight="360"/>
+          </ScrollViewer>
+          <Grid Grid.Row="1" Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="TerminalInput" PlaceholderText="输入命令，Enter 发送" FontSize="13" Height="32"/>
+            <Button x:Name="TerminalSend" Grid.Column="1" Content="发送" Style="{StaticResource SecondaryButton}" Height="32" Margin="6,0,0,0"/>
+            <Button x:Name="TerminalNew" Grid.Column="2" Content="新终端" Style="{StaticResource SecondaryButton}" Height="32" Margin="6,0,0,0"/>
+          </Grid>
+          <TextBlock x:Name="TerminalHint" Grid.Row="2" Text="尚未打开终端会话" FontSize="11" Foreground="#6E829B" Margin="0,6,0,0"/>
+        </Grid>
+        <!-- 文件 -->
+        <Grid x:Name="FilesPane" Grid.Row="1" Visibility="Collapsed" Margin="10,0,10,10">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
+          <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,8">
+            <Button x:Name="FileUploadPick" Content="上传到远端" Style="{StaticResource SecondaryButton}" Height="32"/>
+            <Button x:Name="FileDownloadSubmit" Content="下载远端文件" Style="{StaticResource SecondaryButton}" Height="32"/>
+          </StackPanel>
+          <TextBlock x:Name="FileHint" Grid.Row="1" Text="下载保存到本机「下载」目录；远端路径填写完整路径。" FontSize="11" Foreground="#6E829B" TextWrapping="Wrap" Margin="0,0,0,8"/>
+          <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="TransferList" Spacing="4"/>
+          </ScrollViewer>
+        </Grid>
+        <!-- 端口映射 -->
+        <Grid x:Name="PortmapPane" Grid.Row="1" Visibility="Collapsed" Margin="10,0,10,10">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
+          <Border Background="#1E2B3C" CornerRadius="6" Padding="10,8">
+            <StackPanel Spacing="6">
+              <TextBox x:Name="PortmapName" PlaceholderText="规则名称（可选）" Height="30" FontSize="12"/>
+              <TextBox x:Name="PortmapLocalPort" PlaceholderText="本地端口（如 8080）" Height="30" FontSize="12"/>
+              <TextBox x:Name="PortmapTargetAddr" PlaceholderText="被控端目标地址（如 127.0.0.1）" Height="30" FontSize="12"/>
+              <TextBox x:Name="PortmapTargetPort" PlaceholderText="被控端目标端口" Height="30" FontSize="12"/>
+              <Button x:Name="PortmapAdd" Content="添加映射" Style="{StaticResource PrimaryButton}" Height="32"/>
+              <TextBlock x:Name="PortmapError" FontSize="11" Foreground="#E08888" TextWrapping="Wrap"/>
+            </StackPanel>
+          </Border>
+          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,8,0,0">
+            <StackPanel x:Name="PortmapList" Spacing="4"/>
+          </ScrollViewer>
+        </Grid>
+      </Grid>
+    </Border>
+    <Grid Grid.Column="1" x:Name="SessionStage">
     <SwapChainPanel x:Name="SessionPanel"/>
     <StackPanel x:Name="SessionOverlay" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10" IsHitTestVisible="False">
       <ProgressRing x:Name="SessionSpinner" IsActive="True" Width="42" Height="42"/>
@@ -63,6 +148,20 @@
     </StackPanel>
     <Border x:Name="SessionHudPanel" VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="10" Background="#CC141D27" CornerRadius="6" Padding="10,6" IsHitTestVisible="False" Visibility="Collapsed">
       <TextBlock x:Name="SessionHud" Text="" FontFamily="Consolas" FontSize="12" Foreground="#9FE0B3" LineHeight="18"/>
+    </Border>
+    </Grid>
+  </Grid>
+  <!-- M4 输入提示浮层（下载远端路径等） -->
+  <Grid x:Name="PromptOverlay" Grid.RowSpan="3" Visibility="Collapsed" Background="#AA000000">
+    <Border Width="360" Background="White" CornerRadius="10" Padding="18">
+      <StackPanel Spacing="10">
+        <TextBlock x:Name="PromptTitle" Text="输入" Style="{StaticResource SubtitleText}"/>
+        <TextBox x:Name="PromptInput" Height="34"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+          <Button x:Name="PromptCancel" Content="取消" Style="{StaticResource SecondaryButton}" Height="32"/>
+          <Button x:Name="PromptOk" Content="确定" Style="{StaticResource PrimaryButton}" Height="32" Width="90"/>
+        </StackPanel>
+      </StackPanel>
     </Border>
   </Grid>
 </Grid>

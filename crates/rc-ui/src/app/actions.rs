@@ -54,6 +54,17 @@ pub(crate) enum Action {
     StageRectChanged(u32, u32),
     SessionFullscreen,
     DisplayChanged,
+    ToolToggle,
+    ToolTab(u8),
+    TerminalSend,
+    TerminalNew,
+    FileUploadPick,
+    FileDownloadPick,
+    TransferCancel(u64),
+    PortmapAdd,
+    PortmapRule(u64, u8),
+    PromptOk,
+    PromptCancel,
 }
 
 pub(crate) enum Event {

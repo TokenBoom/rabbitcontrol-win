@@ -1124,6 +1124,7 @@ dependencies = [
  "rc-input",
  "rc-platform-win",
  "rc-session",
+ "rc-tools",
  "rc-types",
  "serde",
  "serde_json",

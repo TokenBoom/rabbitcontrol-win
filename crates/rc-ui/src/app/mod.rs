@@ -91,6 +91,17 @@ pub struct App {
     session_host: Option<crate::ui::session_window::SessionWindow>,
     /// 会话窗口是否处于全屏（Esc 退出用）。
     fullscreen: bool,
+    /// M4 工具面板状态。
+    tool_panel_visible: bool,
+    tool_tab: u8,
+    terminal_text: String,
+    terminal_id: Option<u32>,
+    terminal_dirty: bool,
+    transfers: Vec<rc_tools::file_transfer::TransferItem>,
+    transfers_dirty: bool,
+    portmaps: Vec<rc_tools::portmap::PortMapRuleSnapshot>,
+    /// 提示浮层待办（0 无 / 1 下载路径）。
+    prompt_pending: u8,
     peer_watch_only: bool,
     pressed_keys: Vec<u16>,
     pressed_buttons: Vec<u8>,
@@ -153,6 +164,15 @@ impl App {
             manual_disconnect: false,
             session_host: None,
             fullscreen: false,
+            tool_panel_visible: false,
+            tool_tab: 0,
+            terminal_text: String::new(),
+            terminal_id: None,
+            terminal_dirty: false,
+            transfers: Vec::new(),
+            transfers_dirty: false,
+            portmaps: Vec::new(),
+            prompt_pending: 0,
             peer_watch_only: false,
             pressed_keys: Vec::new(),
             pressed_buttons: Vec::new(),
@@ -303,6 +323,52 @@ impl App {
         self.click("SessionReconnect", Action::SessionReconnect)?;
         self.click("SessionQuality", Action::SessionQualityToggle)?;
         self.click("SessionFullscreen", Action::SessionFullscreen)?;
+        // M4 工具面板
+        self.click("ToolToggle", Action::ToolToggle)?;
+        self.click("TerminalSend", Action::TerminalSend)?;
+        self.click("TerminalNew", Action::TerminalNew)?;
+        self.click("FileUploadPick", Action::FileUploadPick)?;
+        self.click("FileDownloadPick", Action::FileDownloadPick)?;
+        self.click("PortmapAdd", Action::PortmapAdd)?;
+        self.click("PromptOk", Action::PromptOk)?;
+        self.click("PromptCancel", Action::PromptCancel)?;
+        for (name, tab) in [
+            ("ToolTabTerminal", 0u8),
+            ("ToolTabFiles", 1),
+            ("ToolTabPortmap", 2),
+        ] {
+            let sender = self.sender();
+            let toggle: windows::UI::Xaml::Controls::Primitives::ToggleButton = self.find(name)?;
+            let sender_on = sender.clone();
+            let tab_on = tab;
+            toggle.Checked(windows::UI::Xaml::RoutedEventHandler::new(move |_, _| {
+                let sender = sender_on.clone();
+                sender.send(Event::Click(Action::ToolTab(tab_on)));
+                Ok(())
+            }))?;
+            let sender_off = sender;
+            toggle.Unchecked(windows::UI::Xaml::RoutedEventHandler::new(move |_, _| {
+                let _ = sender_off; // Unchecked 仅视觉归一
+                Ok(())
+            }))?;
+        }
+        // 终端输入 Enter 发送
+        {
+            let sender = self.sender();
+            let input: windows::UI::Xaml::UIElement = self.find("TerminalInput")?;
+            input.KeyDown(windows::UI::Xaml::Input::KeyEventHandler::new(
+                move |_, args| {
+                    if let Some(args) = args {
+                        if args.Key()? == windows::System::VirtualKey::Enter {
+                            args.SetHandled(true)?;
+                            let sender = sender.clone();
+                            sender.send(Event::Click(Action::TerminalSend));
+                        }
+                    }
+                    Ok(())
+                },
+            ))?;
+        }
         // M3.2 画质工具条：任一下拉变更 → 统一预钳制后下发
         for name in [
             "StreamResolutionBox",
@@ -885,10 +951,15 @@ impl App {
             if hud_dirty {
                 self.apply_hud();
             }
+            // M4：工具通道事件排空（终端输出/传输进度）
+            self.drain_terminal_events();
+            self.drain_file_events();
+            self.finish_tools_render()?;
             if !session_running {
                 self.release_pressed_input();
                 let text = self.session_overlay_text();
                 self.set_session_overlay(&text, false);
+                self.reset_tools_state();
             }
         }
 
@@ -1002,6 +1073,17 @@ impl App {
                 self.on_display_changed()?;
                 Ok(())
             }
+            Action::ToolToggle => self.on_tool_toggle(),
+            Action::ToolTab(tab) => self.on_tool_tab(tab),
+            Action::TerminalSend => self.on_terminal_send(),
+            Action::TerminalNew => self.on_terminal_new(),
+            Action::FileUploadPick => self.on_file_upload_pick(),
+            Action::FileDownloadPick => self.on_file_download_pick(),
+            Action::TransferCancel(id) => self.on_transfer_cancel(id),
+            Action::PortmapAdd => self.on_portmap_add(),
+            Action::PortmapRule(id, op) => self.on_portmap_rule(id, op),
+            Action::PromptOk => self.on_prompt_ok(),
+            Action::PromptCancel => self.on_prompt_cancel(),
             Action::SessionFullscreen => {
                 if let Some(host) = self.session_host.as_ref() {
                     self.fullscreen = host.toggle_fullscreen();
