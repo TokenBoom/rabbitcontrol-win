@@ -382,6 +382,43 @@
           </StackPanel>
         </ScrollViewer>
       </Grid>
+
+      <!-- 会话（M2：主窗口内嵌过渡视图；M3.6 拆独立窗口） -->
+      <Grid x:Name="SessionPage" Visibility="Collapsed" Background="#101922">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="44"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <Border BorderBrush="{ThemeResource DividerBrush}" BorderThickness="0,0,0,1" Background="#141D27">
+          <Grid Margin="12,0">
+            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+              <TextBlock x:Name="SessionStatus" Text="正在连接…" Style="{StaticResource BodyText}" Foreground="#D8E4FF" VerticalAlignment="Center" MaxWidth="380" TextTrimming="CharacterEllipsis"/>
+              <Border Background="#1E2B3C" CornerRadius="4" Padding="6,2" VerticalAlignment="Center">
+                <TextBlock x:Name="SessionBackend" Text="" FontSize="11" Foreground="#8FB0FF"/>
+              </Border>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" VerticalAlignment="Center">
+              <Button x:Name="SessionReconnect" Content="重新连接" Style="{StaticResource SecondaryButton}" IsEnabled="False"/>
+              <Button x:Name="SessionDisconnect" Style="{StaticResource PrimaryButton}" Height="32">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                  <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xED1C;" FontSize="13"/>
+                  <TextBlock Text="断开" Style="{StaticResource BodyText}" Foreground="{ThemeResource TextOnPrimaryBrush}"/>
+                </StackPanel>
+              </Button>
+            </StackPanel>
+          </Grid>
+        </Border>
+        <Grid Grid.Row="1" x:Name="SessionStage">
+          <SwapChainPanel x:Name="SessionPanel"/>
+          <StackPanel x:Name="SessionOverlay" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10" IsHitTestVisible="False">
+            <ProgressRing x:Name="SessionSpinner" IsActive="True" Width="42" Height="42"/>
+            <TextBlock x:Name="SessionOverlayText" Text="" Foreground="#C5D4E8" FontSize="15" HorizontalAlignment="Center"/>
+          </StackPanel>
+          <Border VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="10" Background="#CC141D27" CornerRadius="6" Padding="10,6" IsHitTestVisible="False">
+            <TextBlock x:Name="SessionHud" Text="" FontFamily="Consolas" FontSize="12" Foreground="#9FE0B3"/>
+          </Border>
+        </Grid>
+      </Grid>
     </Grid>
   </Grid>
 

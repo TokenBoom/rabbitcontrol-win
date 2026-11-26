@@ -8,6 +8,7 @@ mod desktop;
 mod graphics;
 mod history;
 mod runtime;
+mod session;
 mod settings;
 mod shell;
 mod widgets;

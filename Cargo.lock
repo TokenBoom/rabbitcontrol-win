@@ -1079,7 +1079,9 @@ name = "rc-ui"
 version = "0.1.0"
 dependencies = [
  "rc-client-core",
+ "rc-input",
  "rc-platform-win",
+ "rc-session",
  "rc-types",
  "serde",
  "serde_json",

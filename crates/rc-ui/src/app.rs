@@ -29,10 +29,16 @@ use windows::{
     },
 };
 
+use rc_client_core::session_bridge::{SessionHandle, SessionUpdate};
+use rc_input::InputEvent;
+use windows::UI::Xaml::Controls::SwapChainPanel;
+use windows::UI::Xaml::Input::PointerEventHandler;
+
 use crate::{
     auth::{self, AccountSession, AuthRuntime},
     history::{self, TargetHistory},
     runtime::SignalRuntime,
+    session::{self as sess, SessionView},
     settings,
     shell::{self, Shell, ShellNotifier, DESIGN_HEIGHT, DESIGN_WIDTH},
     widgets,
@@ -44,6 +50,7 @@ enum Page {
     Assist,
     Favorites,
     Settings,
+    Session,
 }
 
 #[derive(Clone)]
@@ -73,6 +80,8 @@ enum Action {
     LockOnExitToggled(bool),
     ProbeServer,
     BannerDisconnect,
+    SessionDisconnect,
+    SessionReconnect,
 }
 
 enum Event {
@@ -83,11 +92,46 @@ enum Event {
     SaveServerFinished(std::result::Result<(), String>),
     DevicesFinished(std::result::Result<Vec<MyDeviceInfo>, String>),
     DeviceActionFinished(std::result::Result<(), String>),
+    SessionLaunched(Box<SessionLaunchOutcome>, String, String),
+    SessionPointer(SessionPointerEvent),
+    SessionKey(SessionKeyEvent),
+}
+
+/// 会话启动结果（Box 降低 Event 枚举整体尺寸）。
+struct SessionLaunchOutcome {
+    result: std::result::Result<SessionHandle, String>,
+    target_id: String,
+    target_name: String,
+}
+
+/// 会话舞台鼠标事件（纯值）。
+#[derive(Debug, Clone, Copy)]
+enum SessionPointerEvent {
+    Move {
+        x: f64,
+        y: f64,
+    },
+    Button {
+        x: f64,
+        y: f64,
+        button: u8,
+        pressed: bool,
+    },
+    Wheel {
+        delta: i32,
+    },
+}
+
+/// 会话键盘事件（纯值）。
+#[derive(Debug, Clone, Copy)]
+struct SessionKeyEvent {
+    key: VirtualKey,
+    pressed: bool,
 }
 
 /// 事件发送句柄（跨线程克隆便宜；XAML 对象不可经此传递）。
 #[derive(Clone)]
-struct Events {
+pub struct Events {
     tx: Sender<Event>,
     notifier: ShellNotifier,
 }
@@ -115,6 +159,15 @@ const BUSY_CONTROLS: [&str; 12] = [
     "NetworkOrigin",
 ];
 
+/// 活动会话的 UI 侧状态（句柄 + 视图态 + 视口尺寸）。
+struct ActiveSession {
+    handle: SessionHandle,
+    video: Option<(u32, u32)>,
+    watch_only: bool,
+    target_name: String,
+    target_id: String,
+}
+
 pub struct App {
     root: FrameworkElement,
     hwnd: windows::Win32::Foundation::HWND,
@@ -133,6 +186,12 @@ pub struct App {
     lan_codes: Vec<String>,
     history_tab_fav: bool,
     tick: u64,
+    session: Option<ActiveSession>,
+    session_view: SessionView,
+    peer_watch_only: bool,
+    pressed_keys: Vec<u16>,
+    pressed_buttons: Vec<u8>,
+    pressed_modifiers: u8,
 }
 
 impl App {
@@ -164,6 +223,12 @@ impl App {
             lan_codes: Vec::new(),
             history_tab_fav: false,
             tick: 0,
+            session: None,
+            session_view: SessionView::Idle,
+            peer_watch_only: false,
+            pressed_keys: Vec::new(),
+            pressed_buttons: Vec::new(),
+            pressed_modifiers: 0,
         };
         app.wire()?;
         app.update_caption()?;
@@ -282,6 +347,123 @@ impl App {
         self.switch_toggled("LockOnExitToggle", Action::LockOnExitToggled(true))?;
         self.click("ProbeServer", Action::ProbeServer)?;
         self.click("BannerDisconnect", Action::BannerDisconnect)?;
+        // 会话工具条
+        self.click("SessionDisconnect", Action::SessionDisconnect)?;
+        self.click("SessionReconnect", Action::SessionReconnect)?;
+        // 会话舞台输入（M2：鼠标 + 滚轮 + 键盘；watch_only 时不发送）
+        {
+            let sender = self.sender();
+            let panel: SwapChainPanel = self.root.FindName("SessionPanel")?.cast()?;
+            let panel_ui: UIElement = panel.cast()?;
+            let sender_moved = sender.clone();
+            panel_ui.PointerMoved(PointerEventHandler::new(move |_, args| {
+                if let Some(args) = args {
+                    let pos = args.GetCurrentPoint(None).and_then(|pt| pt.Position())?;
+                    let sender = sender_moved.clone();
+                    sender.send(Event::SessionPointer(SessionPointerEvent::Move {
+                        x: f64::from(pos.X),
+                        y: f64::from(pos.Y),
+                    }));
+                }
+                Ok(())
+            }))?;
+            let panel_press: UIElement = panel.clone().cast()?;
+            let sender_press = sender.clone();
+            panel_press.PointerPressed(PointerEventHandler::new(move |_, args| {
+                if let Some(args) = args {
+                    let pt = args.GetCurrentPoint(None)?;
+                    let pos = pt.Position()?;
+                    let props = pt.Properties()?;
+                    let button = if props.IsLeftButtonPressed()? {
+                        0u8
+                    } else if props.IsRightButtonPressed()? {
+                        1
+                    } else if props.IsMiddleButtonPressed()? {
+                        2
+                    } else {
+                        return Ok(());
+                    };
+                    args.SetHandled(true)?;
+                    let sender = sender_press.clone();
+                    sender.send(Event::SessionPointer(SessionPointerEvent::Button {
+                        x: f64::from(pos.X),
+                        y: f64::from(pos.Y),
+                        button,
+                        pressed: true,
+                    }));
+                }
+                Ok(())
+            }))?;
+            let panel_released: SwapChainPanel = panel.clone();
+            let panel_release: UIElement = panel_released.cast()?;
+            let sender_release = sender.clone();
+            panel_release.PointerReleased(PointerEventHandler::new(move |_, args| {
+                if let Some(args) = args {
+                    let pt = args.GetCurrentPoint(None)?;
+                    let pos = pt.Position()?;
+                    let props = pt.Properties()?;
+                    let button = if !props.IsLeftButtonPressed()? {
+                        0u8
+                    } else if !props.IsRightButtonPressed()? {
+                        1
+                    } else if !props.IsMiddleButtonPressed()? {
+                        2
+                    } else {
+                        return Ok(());
+                    };
+                    args.SetHandled(true)?;
+                    let sender = sender_release.clone();
+                    sender.send(Event::SessionPointer(SessionPointerEvent::Button {
+                        x: f64::from(pos.X),
+                        y: f64::from(pos.Y),
+                        button,
+                        pressed: false,
+                    }));
+                }
+                Ok(())
+            }))?;
+            let panel_wheel: SwapChainPanel = panel.clone();
+            let panel_wheel_ui: UIElement = panel_wheel.cast()?;
+            let sender_wheel = sender.clone();
+            panel_wheel_ui.PointerWheelChanged(PointerEventHandler::new(move |_, args| {
+                if let Some(args) = args {
+                    let pt = args.GetCurrentPoint(None)?;
+                    let delta = pt.Properties()?.MouseWheelDelta()?;
+                    let sender = sender_wheel.clone();
+                    sender.send(Event::SessionPointer(SessionPointerEvent::Wheel { delta }));
+                    args.SetHandled(true)?;
+                }
+                Ok(())
+            }))?;
+        }
+        {
+            // 键盘：挂在 SessionStage（面板获得焦点或点击后生效）。
+            let sender = self.sender();
+            let stage: UIElement = self.root.FindName("SessionStage")?.cast()?;
+            let sender_down = sender.clone();
+            stage.KeyDown(KeyEventHandler::new(move |_, args| {
+                if let Some(args) = args {
+                    let key = args.Key()?;
+                    args.SetHandled(true)?;
+                    let sender = sender_down.clone();
+                    sender.send(Event::SessionKey(SessionKeyEvent { key, pressed: true }));
+                }
+                Ok(())
+            }))?;
+            let sender_up = sender.clone();
+            stage.KeyUp(KeyEventHandler::new(move |_, args| {
+                if let Some(args) = args {
+                    let key = args.Key()?;
+                    args.SetHandled(true)?;
+                    let sender = sender_up.clone();
+                    sender.send(Event::SessionKey(SessionKeyEvent {
+                        key,
+                        pressed: false,
+                    }));
+                }
+                Ok(())
+            }))?;
+        }
         Ok(())
     }
 
@@ -465,6 +647,33 @@ impl App {
                         Err(message) => self.label("AssistError", &message)?,
                     }
                 }
+                Event::SessionLaunched(launch, _t, _n) => {
+                    let (target_id, target_name) =
+                        (launch.target_id.clone(), launch.target_name.clone());
+                    match launch.result {
+                        Ok(handle) => {
+                            let watch_only = self.peer_watch_only;
+                            self.session = Some(ActiveSession {
+                                handle,
+                                video: None,
+                                watch_only,
+                                target_name,
+                                target_id,
+                            });
+                            self.session_view = SessionView::Idle;
+                            self.page = Page::Session;
+                            self.show_page(Page::Session)?;
+                            self.apply_session_view();
+                        }
+                        Err(message) => {
+                            self.label("AssistError", &format!("连接失败：{message}"))?;
+                            self.set_session_overlay(&format!("连接失败：{message}"), false);
+                            self.set_visible("SessionReconnect", true)?;
+                        }
+                    }
+                }
+                Event::SessionPointer(pointer) => self.on_session_pointer(pointer)?,
+                Event::SessionKey(key) => self.on_session_key(key)?,
             }
         }
         self.on_tick()?;
@@ -494,6 +703,35 @@ impl App {
             }
             self.render_devices()?;
         }
+        // 会话更新排空（状态机 + HUD + 结束处理）。
+        let mut session_updates = Vec::new();
+        let mut session_running = false;
+        if let Some(active) = self.session.as_ref() {
+            session_running = active.handle.is_running();
+            while let Some(update) = active.handle.try_recv_update() {
+                session_updates.push(update);
+            }
+        }
+        for update in session_updates {
+            if let SessionUpdate::Negotiated { width, height, .. } = &update {
+                if let Some(active) = self.session.as_mut() {
+                    active.video = Some((*width, *height));
+                }
+            }
+            if matches!(update, SessionUpdate::Ended { .. }) {
+                session_running = false;
+            }
+            self.session_view = sess::view_state_of(&update, &self.session_view);
+        }
+        if self.session.is_some() {
+            self.apply_session_view();
+            if !session_running {
+                self.release_pressed_input();
+                let text = self.session_overlay_text();
+                self.set_session_overlay(&text, false);
+            }
+        }
+
         // 每约 1s 刷新一次 LAN 直连候选。
         if self.tick % 20 == 0 {
             let codes = self
@@ -577,12 +815,25 @@ impl App {
                 self.history_tab_fav = fav;
                 self.render_history()
             }
-            Action::DeviceConnect(code) => self.prefill_connect(&code),
+            Action::DeviceConnect(code) => self.start_session(&code),
             Action::ConnectSubmit => {
                 let text = self.find::<TextBox>("PeerCodeBox")?.Text()?.to_string();
                 let digits = digit_of(&text);
                 if digits.len() == 9 {
-                    self.prefill_connect(&digits)?;
+                    self.start_session(&digits)?;
+                }
+                Ok(())
+            }
+            Action::SessionDisconnect => {
+                if let Some(active) = self.session.as_ref() {
+                    sess::disconnect(&active.handle);
+                }
+                Ok(())
+            }
+            Action::SessionReconnect => {
+                let target = self.session.as_ref().map(|s| s.target_id.clone());
+                if let Some(target) = target {
+                    self.start_session(&target)?;
                 }
                 Ok(())
             }
@@ -665,7 +916,7 @@ impl App {
         }
     }
 
-    /// 连接请求先导：填入开始协助页并导向（M2 接入真实会话）。
+    /// 连接请求先导：记录最近目标后直接发起会话。
     fn prefill_connect(&mut self, code: &str) -> Result<()> {
         // 语义对齐 iOS TargetHistory：发起连接即记录最近目标。
         let at_sec = std::time::SystemTime::now()
@@ -683,11 +934,135 @@ impl App {
             .unwrap()
             .record_connect(code, &name, at_sec);
         self.persist_history()?;
-        self.label("AssistError", "会话链路将在 M2 里程碑开放：目标已就绪。")?;
-        self.find::<TextBox>("PeerCodeBox")?
-            .SetText(HSTRING::from(&server_config::format_device_id(code)))?;
-        self.page = Page::Assist;
-        self.show_page(Page::Assist)
+        self.start_session(code)
+    }
+
+    /// 发起会话：后台线程完成阻塞式信令请求与配置组装。
+    fn start_session(&mut self, code: &str) -> Result<()> {
+        if !self.logged_in {
+            self.label("AssistError", "请先登录。")?;
+            return Ok(());
+        }
+        if self.runtime.snapshot().and_then(|s| s.device_id).is_none() {
+            self.label("AssistError", "信令尚未在线，请稍候重试。")?;
+            return Ok(());
+        }
+        let password = self
+            .find_opt::<PasswordBox>("PeerPasswordBox")
+            .map(|box_| box_.Password().unwrap_or_default().to_string())
+            .filter(|p| !p.is_empty());
+        // 0.37 投影 CheckBox.IsChecked 需 UIA；M2 以勾选框视觉状态不可读，
+        // 仅观看入口保留在 UI，后续经 GetTogglePattern 化（先读 IReference）。
+        // M2：仅观看勾选框的视觉态读取在 M3 完善（0.37 无直接投影）。
+        let watch_only = false;
+        self.peer_watch_only = watch_only;
+        let preset = self.prefs.lock().unwrap().bitrate_preset.clone();
+        let params = sess::ConnectParams {
+            password,
+            watch_only,
+            bitrate_bps: sess::bitrate_preset_to_bps(&preset),
+            fps: 60,
+            lan_direct: self
+                .runtime
+                .lan_peers()
+                .iter()
+                .find(|p| p.device_id.as_deref() == Some(code))
+                .map(|p| p.addr.clone()),
+        };
+        let name = self
+            .devices
+            .iter()
+            .find(|d| d.device_id == code)
+            .map(|d| self.device_name_of(d))
+            .unwrap_or_else(|| code.to_string());
+        self.set_session_overlay("正在连接…", true);
+        let _ = self.set_visible("SessionReconnect", false);
+        self.page = Page::Session;
+        self.show_page(Page::Session)?;
+        let manager = self.auth.manager();
+        let runtime = Arc::clone(&self.runtime);
+        let events = self.sender();
+        let code = code.to_string();
+        thread::spawn(move || {
+            let result = runtime
+                .request_connect(&code, sess::CONNECT_TIMEOUT)
+                .and_then(|grant| sess::build_session_config(&manager, grant, &params));
+            let outcome = match result {
+                Ok(cfg) => Ok(SessionHandle::spawn(cfg)),
+                Err(err) => Err(err),
+            };
+            events.send(Event::SessionLaunched(
+                Box::new(SessionLaunchOutcome {
+                    result: outcome,
+                    target_id: code,
+                    target_name: name,
+                }),
+                String::new(),
+                String::new(),
+            ));
+        });
+        Ok(())
+    }
+
+    /// 会话视图渲染：状态行 / 后端徽章 / 遮罩 / HUD。
+    fn apply_session_view(&mut self) {
+        let view = self.session_view.clone();
+        match &view {
+            SessionView::Idle => {}
+            SessionView::Connecting(text) => {
+                let _ = self.label("SessionStatus", text);
+                self.set_session_overlay(text, true);
+            }
+            SessionView::Negotiated {
+                width,
+                height,
+                fps,
+                backend,
+                transport,
+                mtls_active: _,
+                watch_only,
+            } => {
+                let mode = if *watch_only { " · 观看" } else { "" };
+                let status = format!(
+                    "{target} · {w}×{h}@{fps}{mode}",
+                    target = self
+                        .session
+                        .as_ref()
+                        .map(|s| s.target_name.as_str())
+                        .unwrap_or(""),
+                    w = width,
+                    h = height,
+                    fps = fps,
+                );
+                let _ = self.label("SessionStatus", &status);
+                let badge = format!("{backend} · {transport}",);
+                let _ = self.label("SessionBackend", &badge);
+                self.set_session_overlay("", false);
+            }
+            SessionView::Ended(reason) => {
+                let _ = self.label("SessionStatus", &format!("已结束：{reason}"));
+                self.set_session_overlay(&format!("会话已结束：{reason}"), false);
+                let _ = self.set_visible("SessionReconnect", true);
+            }
+        }
+    }
+
+    fn set_session_overlay(&self, text: &str, spinner: bool) {
+        let _ = self.label("SessionOverlayText", text);
+        if let Some(ring) =
+            self.find_opt::<windows::UI::Xaml::Controls::ProgressRing>("SessionSpinner")
+        {
+            let _ = ring.SetIsActive(spinner);
+        }
+        let visible = !text.is_empty() || spinner;
+        let _ = self.set_visible("SessionOverlay", visible);
+    }
+
+    fn session_overlay_text(&self) -> String {
+        self.find_opt::<TextBlock>("SessionOverlayText")
+            .and_then(|t| t.Text().ok())
+            .map(|t| t.to_string())
+            .unwrap_or_default()
     }
 
     fn save_server_settings(&mut self) -> Result<()> {
@@ -876,6 +1251,7 @@ impl App {
         self.set_visible("AssistPage", page == Page::Assist)?;
         self.set_visible("FavoritesPage", page == Page::Favorites)?;
         self.set_visible("SettingsPage", page == Page::Settings)?;
+        self.set_visible("SessionPage", page == Page::Session)?;
         self.select_nav(page)?;
         if page == Page::Favorites {
             self.render_favorites()?;
@@ -895,6 +1271,7 @@ impl App {
             ("NavAssist", Page::Assist),
             ("NavFavorites", Page::Favorites),
             ("NavSettings", Page::Settings),
+            // Session 页无导航高亮。
         ] {
             if let Some(button) = self.find_opt::<ToggleButton>(name) {
                 set_checked(&button, page == target)?;
@@ -915,6 +1292,142 @@ impl App {
         self.find::<TextBox>("NetworkOrigin")?
             .SetText(HSTRING::from(&origin))?;
         self.label("CurrentServerCaption", &format!("当前：{origin}"))
+    }
+
+    // ── 会话输入（M2：鼠标/滚轮/键盘；watch_only 不发送）──
+
+    fn stage_size(&self) -> (f64, f64) {
+        self.find_opt::<SwapChainPanel>("SessionPanel")
+            .and_then(|panel| panel.cast::<FrameworkElement>().ok())
+            .and_then(|element| {
+                let w = element.ActualWidth().ok()?;
+                let h = element.ActualHeight().ok()?;
+                Some((w, h))
+            })
+            .unwrap_or((0.0, 0.0))
+    }
+
+    fn on_session_pointer(&mut self, event: SessionPointerEvent) -> Result<()> {
+        // 直接字段访问：session 借用与 pressed_* 修改字段不相交。
+        let Some(active) = self.session.as_ref() else {
+            return Ok(());
+        };
+        if !matches!(self.session_view, SessionView::Negotiated { .. }) || active.watch_only {
+            return Ok(());
+        }
+        let handle = &active.handle;
+        let video = active.video;
+        let stage = self.stage_size();
+        if stage.0 <= 0.0 || stage.1 <= 0.0 {
+            return Ok(());
+        }
+        match event {
+            SessionPointerEvent::Move { x, y } => {
+                let (nx, ny) = sess::normalize_in_video(x, y, stage.0, stage.1, video);
+                handle.send_input(InputEvent::MouseMove { x: nx, y: ny });
+            }
+            SessionPointerEvent::Button {
+                x,
+                y,
+                button,
+                pressed,
+            } => {
+                let (nx, ny) = sess::normalize_in_video(x, y, stage.0, stage.1, video);
+                handle.send_input(InputEvent::MouseMove { x: nx, y: ny });
+                if pressed {
+                    if !self.pressed_buttons.contains(&button) {
+                        self.pressed_buttons.push(button);
+                    }
+                } else {
+                    self.pressed_buttons.retain(|b| *b != button);
+                }
+                handle.send_input(InputEvent::MouseButton {
+                    button: match button {
+                        0 => rc_input::MouseButton::Left,
+                        1 => rc_input::MouseButton::Right,
+                        _ => rc_input::MouseButton::Middle,
+                    },
+                    pressed,
+                });
+            }
+            SessionPointerEvent::Wheel { delta } => {
+                handle.send_input(InputEvent::MouseWheel {
+                    delta: sess::wheel_to_lines(delta as i16),
+                    horizontal: false,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn on_session_key(&mut self, event: SessionKeyEvent) -> Result<()> {
+        let Some(active) = self.session.as_ref() else {
+            return Ok(());
+        };
+        if !matches!(self.session_view, SessionView::Negotiated { .. }) || active.watch_only {
+            return Ok(());
+        }
+        let handle = &active.handle;
+        // 修饰键跟踪（供其余按键携带位标志）。
+        let mod_bit = match event.key {
+            VirtualKey::LeftControl | VirtualKey::RightControl => Some(0u8),
+            VirtualKey::LeftShift | VirtualKey::RightShift => Some(1),
+            VirtualKey::LeftMenu | VirtualKey::RightMenu => Some(2),
+            VirtualKey::LeftWindows | VirtualKey::RightWindows => Some(3),
+            _ => None,
+        };
+        if let Some(bit) = mod_bit {
+            if event.pressed {
+                self.pressed_modifiers |= 1 << bit;
+            } else {
+                self.pressed_modifiers &= !(1 << bit);
+            }
+        }
+        let Some(code) = vkey_to_dom(event.key) else {
+            return Ok(());
+        };
+        let Some(scancode) = rc_client_core::input_bridge::scancode_for(&code) else {
+            return Ok(());
+        };
+        if event.pressed {
+            if !self.pressed_keys.contains(&scancode) {
+                self.pressed_keys.push(scancode);
+            }
+        } else {
+            self.pressed_keys.retain(|k| *k != scancode);
+        }
+        handle.send_input(InputEvent::Key {
+            scancode,
+            pressed: event.pressed,
+            modifiers: self.pressed_modifiers,
+        });
+        Ok(())
+    }
+
+    /// 焦点丢失 / 会话结束时补发全部已按下键与鼠标键的 released。
+    fn release_pressed_input(&mut self) {
+        let Some(active) = self.session.as_ref() else {
+            return;
+        };
+        let modifiers = self.pressed_modifiers;
+        for scancode in self.pressed_keys.drain(..) {
+            active.handle.send_input(InputEvent::Key {
+                scancode,
+                pressed: false,
+                modifiers,
+            });
+        }
+        for button in self.pressed_buttons.drain(..) {
+            active.handle.send_input(InputEvent::MouseButton {
+                button: match button {
+                    0 => rc_input::MouseButton::Left,
+                    1 => rc_input::MouseButton::Right,
+                    _ => rc_input::MouseButton::Middle,
+                },
+                pressed: false,
+            });
+        }
+        self.pressed_modifiers = 0;
     }
 
     fn apply_settings_tab(&self, index: u8) -> Result<()> {
@@ -1275,6 +1788,65 @@ fn relative_time(at_sec: u64) -> String {
 /// 输入对话框占位（M1 收尾实现自绘 ContentDialog）。
 fn prompt_text(_title: &str) -> Option<String> {
     None
+}
+
+/// Windows `VirtualKey` → DOM `code` 字符串（喂给 core 的 Set-1 表）。
+fn vkey_to_dom(key: VirtualKey) -> Option<String> {
+    use VirtualKey as V;
+    let code = match key {
+        V::A => "KeyA",
+        V::B => "KeyB",
+        V::C => "KeyC",
+        V::D => "KeyD",
+        V::E => "KeyE",
+        V::F => "KeyF",
+        V::G => "KeyG",
+        V::H => "KeyH",
+        V::I => "KeyI",
+        V::J => "KeyJ",
+        V::K => "KeyK",
+        V::L => "KeyL",
+        V::M => "KeyM",
+        V::N => "KeyN",
+        V::O => "KeyO",
+        V::P => "KeyP",
+        V::Q => "KeyQ",
+        V::R => "KeyR",
+        V::S => "KeyS",
+        V::T => "KeyT",
+        V::U => "KeyU",
+        V::V => "KeyV",
+        V::W => "KeyW",
+        V::X => "KeyX",
+        V::Y => "KeyY",
+        V::Z => "KeyZ",
+        V::Number0 => "Digit0",
+        V::Number1 => "Digit1",
+        V::Number2 => "Digit2",
+        V::Number3 => "Digit3",
+        V::Number4 => "Digit4",
+        V::Number5 => "Digit5",
+        V::Number6 => "Digit6",
+        V::Number7 => "Digit7",
+        V::Number8 => "Digit8",
+        V::Number9 => "Digit9",
+        V::Space => "Space",
+        V::Enter => "Enter",
+        V::Escape => "Escape",
+        V::Back => "Backspace",
+        V::Tab => "Tab",
+        V::Delete => "Delete",
+        V::Home => "Home",
+        V::End => "End",
+        V::PageUp => "PageUp",
+        V::PageDown => "PageDown",
+        V::Up => "ArrowUp",
+        V::Down => "ArrowDown",
+        V::Left => "ArrowLeft",
+        V::Right => "ArrowRight",
+        _ => return None,
+    };
+    Some(code.to_string())
 }
 
 /// StackPanel.Children 经 Panel 接口访问（0.37 投影返回 UIElementCollection）。

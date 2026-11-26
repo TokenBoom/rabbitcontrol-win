@@ -14,6 +14,8 @@ path = "src/main.rs"
 [dependencies]
 rc-platform-win = { path = "../rc-platform-win" }
 rc-client-core.workspace = true
+rc-session.workspace = true
+rc-input.workspace = true
 rc-types.workspace = true
 serde.workspace = true
 serde_json.workspace = true
