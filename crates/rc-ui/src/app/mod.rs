@@ -81,6 +81,12 @@ pub struct App {
     quality: sess::QualityState,
     quality_fps_options: Vec<u32>,
     quality_sig: String,
+    /// M3.7 自动重连：待触发的 tick / 目标设备 / 已尝试次数。
+    pending_reconnect_tick: Option<u64>,
+    reconnect_target: Option<String>,
+    reconnect_attempts: u32,
+    /// 用户主动断开 → 不自动重连。
+    manual_disconnect: bool,
     peer_watch_only: bool,
     pressed_keys: Vec<u16>,
     pressed_buttons: Vec<u8>,
@@ -137,6 +143,10 @@ impl App {
             quality: sess::QualityState::default(),
             quality_fps_options: Vec::new(),
             quality_sig: String::new(),
+            pending_reconnect_tick: None,
+            reconnect_target: None,
+            reconnect_attempts: 0,
+            manual_disconnect: false,
             peer_watch_only: false,
             pressed_keys: Vec::new(),
             pressed_buttons: Vec::new(),
@@ -704,7 +714,47 @@ impl App {
             if matches!(update, SessionUpdate::Ended { .. }) {
                 session_running = false;
             }
+            // M3.7：远端切换桌面 → 短延迟自动重连（不计入次数）
+            if let SessionUpdate::SessionSwitching { reason } = &update {
+                self.reconnect_target = self.session.as_ref().map(|s| s.target_id.clone());
+                self.pending_reconnect_tick = Some(self.tick + 40); // 2s
+                self.set_session_overlay(&format!("{reason}，自动重连中…"), true);
+            }
+            // M3.7：异常断开（非用户主动）→ 最多 3 次自动重连，3s 间隔
+            if let SessionUpdate::Ended { reason } = &update {
+                if !self.manual_disconnect && self.reconnect_attempts < 3 {
+                    self.reconnect_target = self.session.as_ref().map(|s| s.target_id.clone());
+                    self.pending_reconnect_tick = Some(self.tick + 60); // 3s
+                    self.set_session_overlay(
+                        &format!(
+                            "连接已断开（{reason}），3 秒后自动重连（第 {}/3 次）…",
+                            self.reconnect_attempts + 1
+                        ),
+                        true,
+                    );
+                }
+            }
+            // 协商成功 → 重置重连计数
+            if matches!(
+                update,
+                SessionUpdate::Negotiated { .. } | SessionUpdate::DisplayConfig { .. }
+            ) {
+                self.reconnect_attempts = 0;
+            }
             self.session_view = sess::view_state_of(&update, &self.session_view);
+        }
+
+        // M3.7：到点触发自动重连（会话已结束时启动新连接）。
+        if let (Some(at), Some(target)) =
+            (self.pending_reconnect_tick, self.reconnect_target.clone())
+        {
+            if self.tick >= at && self.session.as_ref().map(|s| s.handle.is_running()) != Some(true)
+            {
+                self.pending_reconnect_tick = None;
+                self.reconnect_attempts += 1;
+                self.manual_disconnect = false;
+                self.start_session(&target)?;
+            }
         }
         if self.session.is_some() {
             self.apply_session_view();
@@ -810,6 +860,8 @@ impl App {
                 Ok(())
             }
             Action::SessionDisconnect => {
+                self.manual_disconnect = true;
+                self.pending_reconnect_tick = None;
                 if let Some(active) = self.session.as_ref() {
                     sess::disconnect(&active.handle);
                 }
