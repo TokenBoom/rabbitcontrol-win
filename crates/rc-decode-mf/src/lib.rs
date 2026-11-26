@@ -22,8 +22,8 @@ use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use windows::Win32::Graphics::Direct3D11::{ID3D11Device, ID3D11Texture2D};
 use windows::Win32::Media::MediaFoundation::{
     IMFDXGIBuffer, IMFMediaType, IMFTransform, MFCreateDXGIDeviceManager, MFCreateMediaType,
-    MFCreateMemoryBuffer, MFMediaType_Video, MFVideoFormat_H264,
-    MFVideoFormat_NV12, MFT_MESSAGE_COMMAND_FLUSH, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
+    MFCreateMemoryBuffer, MFMediaType_Video, MFVideoFormat_H264, MFVideoFormat_NV12,
+    MFT_MESSAGE_COMMAND_FLUSH, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
     MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_MESSAGE_SET_D3D_MANAGER, MFT_OUTPUT_DATA_BUFFER,
     MF_E_TRANSFORM_NEED_MORE_INPUT, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE,
 };
