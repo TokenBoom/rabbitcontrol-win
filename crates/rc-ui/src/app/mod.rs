@@ -134,7 +134,12 @@ impl App {
             pressed_buttons: Vec::new(),
             pressed_modifiers: 0,
         };
-        app.wire()?;
+        eprintln!("[App::new] pre-wire");
+        app.wire().map_err(|e| {
+            eprintln!("[App::new] wire FAIL: {e}");
+            e
+        })?;
+        eprintln!("[App::new] wire OK");
         app.update_caption()?;
         app.apply_scale()?;
         if app.auth.has_saved_session() {
@@ -150,7 +155,12 @@ impl App {
                 )));
             });
         }
-        shell.set_content(&app.root)?;
+        eprintln!("[App::new] pre-set_content");
+        shell.set_content(&app.root).map_err(|e| {
+            eprintln!("[App::new] set_content FAIL: {e}");
+            e
+        })?;
+        eprintln!("[App::new] set_content OK");
         Ok(app)
     }
 
@@ -469,6 +479,13 @@ impl App {
     }
 
     pub fn dispatch(&mut self) -> Result<()> {
+        if let Err(e) = self.dispatch_inner() {
+            eprintln!("[dispatch] non-fatal error (continuing): {}", e);
+        }
+        Ok(())
+    }
+
+    fn dispatch_inner(&mut self) -> Result<()> {
         // DPI 变化：window_proc 已重设窗口尺寸，这里同步根布局缩放。
         let dpi = unsafe { GetDpiForWindow(self.hwnd) };
         if dpi != self.last_dpi {
@@ -476,6 +493,7 @@ impl App {
             self.apply_scale()?;
         }
         while let Ok(event) = self.inbox.try_recv() {
+            eprintln!("[dispatch] processing event...");
             match event {
                 Event::Click(_) if self.busy => {}
                 Event::Click(action) => self.on_click(action)?,
@@ -585,6 +603,7 @@ impl App {
         if !self.logged_in {
             return Ok(());
         }
+        eprintln!("[on_tick] logged_in");
         self.tick += 1;
         let generation = self.runtime.generation();
         let events = self.runtime.poll();
@@ -869,10 +888,26 @@ fn work_area_fit(hwnd: windows::Win32::Foundation::HWND) -> f64 {
 }
 
 fn install_styles() -> Result<()> {
-    let dict = XamlReader::Load(include_str!("../ui/assets/styles.xaml"))?
-        .cast::<windows::UI::Xaml::ResourceDictionary>()?;
-    let app = Application::Current()?;
-    app.Resources()?.MergedDictionaries()?.Append(&dict)?;
+    let dict = XamlReader::Load(include_str!("../ui/assets/styles.xaml"))
+        .map_err(|e| {
+            windows::core::Error::new(e.code(), HSTRING::from(format!("styles parse: {e}")))
+        })?
+        .cast::<windows::UI::Xaml::ResourceDictionary>()
+        .map_err(|e| {
+            windows::core::Error::new(e.code(), HSTRING::from(format!("styles cast: {e}")))
+        })?;
+    let app = Application::Current().map_err(|e| {
+        windows::core::Error::new(e.code(), HSTRING::from(format!("App::Current: {e}")))
+    })?;
+    let res = app.Resources().map_err(|e| {
+        windows::core::Error::new(e.code(), HSTRING::from(format!("Resources: {e}")))
+    })?;
+    let merged = res.MergedDictionaries().map_err(|e| {
+        windows::core::Error::new(e.code(), HSTRING::from(format!("MergedDicts: {e}")))
+    })?;
+    merged
+        .Append(&dict)
+        .map_err(|e| windows::core::Error::new(e.code(), HSTRING::from(format!("Append: {e}"))))?;
     Ok(())
 }
 

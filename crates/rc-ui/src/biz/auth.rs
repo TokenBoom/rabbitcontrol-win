@@ -197,8 +197,17 @@ pub fn restore_session(
     if !manager.server_config().is_configured() {
         return Ok(None);
     }
-    let Some(sess) = manager.restore_on_startup().map_err(format_auth_error)? else {
-        return Ok(None);
+    let restore_result = manager.restore_on_startup().map_err(format_auth_error);
+    let sess = match restore_result {
+        Ok(Some(s)) => s,
+        Err(err) if err.contains("completed successfully") => {
+            // v0.1.24 restore_on_startup 在某些场景下返回 HRESULT 0 作为错误，
+            // 视为未保存会话，回退到手动登录。
+            eprintln!("[auth] restore_on_startup returned success-as-error, ignoring");
+            return Ok(None);
+        }
+        Ok(None) => return Ok(None),
+        Err(err) => return Err(err),
     };
 
     if sess.must_change_password {

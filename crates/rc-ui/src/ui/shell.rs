@@ -288,21 +288,18 @@ impl Window {
                 return Err(Error::from_win32());
             }
             // DWM 阴影（WS_POPUP 窗口需要 ExtendFrame 激活系统阴影）。
-            let margins = windows::Win32::UI::Controls::MARGINS {
-                cxLeftWidth: 0,
-                cxRightWidth: 0,
-                cyTopHeight: 0,
-                cyBottomHeight: 1,
-            };
-            let _ = windows::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea(hwnd, &margins);
-            // Win11 圆角（Win10 静默忽略，不报错）。
-            let pref = windows::Win32::Graphics::Dwm::DWM_WINDOW_CORNER_PREFERENCE(2); // DWMWCP_ROUND
-            let _ = windows::Win32::Graphics::Dwm::DwmSetWindowAttribute(
-                hwnd,
-                windows::Win32::Graphics::Dwm::DWMWA_WINDOW_CORNER_PREFERENCE,
-                &pref as *const _ as *const core::ffi::c_void,
-                4,
-            );
+            // DWM 阴影 + 圆角（调试中：临时注释以定位启动崩溃）
+            // let margins = windows::Win32::UI::Controls::MARGINS {
+            //     cxLeftWidth: 0, cxRightWidth: 0, cyTopHeight: 0, cyBottomHeight: 1,
+            // };
+            // let _ = windows::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea(hwnd, &margins);
+            // let pref = windows::Win32::Graphics::Dwm::DWM_WINDOW_CORNER_PREFERENCE(2);
+            // let _ = windows::Win32::Graphics::Dwm::DwmSetWindowAttribute(
+            //     hwnd,
+            //     windows::Win32::Graphics::Dwm::DWMWA_WINDOW_CORNER_PREFERENCE,
+            //     &pref as *const _ as *const core::ffi::c_void,
+            //     4,
+            // );
             Ok(Self(hwnd))
         }
     }

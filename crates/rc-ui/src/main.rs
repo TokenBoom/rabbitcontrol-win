@@ -1,4 +1,4 @@
-#![windows_subsystem = "windows"]
+// #![windows_subsystem = "windows"] // 调试：启用控制台
 
 mod app;
 mod biz;
@@ -8,17 +8,12 @@ mod ui;
 
 use std::error::Error;
 
-use windows::Win32::{
-    Foundation::{GetLastError, ERROR_ALREADY_EXISTS},
-    UI::WindowsAndMessaging::{
-        FindWindowW, MessageBoxW, SetForegroundWindow, ShowWindow, MB_ICONERROR, SW_RESTORE,
-    },
+use windows::Win32::UI::WindowsAndMessaging::{
+    FindWindowW, MessageBoxW, SetForegroundWindow, ShowWindow, MB_ICONERROR, SW_RESTORE,
 };
 
 use windows::core::{HSTRING, PCWSTR};
 
-/// 单实例互斥量名（会话级全局）。
-const MUTEX_NAME: &str = "Global\\rabbitcontrol-win";
 /// 主窗口类名（二次启动时用于唤起已有实例）。
 const WINDOW_CLASS: &str = "RabbitControlWindow";
 
@@ -37,7 +32,6 @@ fn acquire_single_instance() -> bool {
     true
 }
 
-
 fn run() -> Result<(), Box<dyn Error>> {
     if !acquire_single_instance() {
         return Ok(());
@@ -45,7 +39,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     rc_platform_win::register_all();
     let shell = ui::shell::Shell::new()?;
     let mut app = app::App::new(&shell)?;
-    shell.show_and_run(|| app.dispatch())?;
+    let _ = shell.show_and_run(|| app.dispatch());
     Ok(())
 }
 
