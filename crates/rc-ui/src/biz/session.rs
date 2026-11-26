@@ -90,8 +90,9 @@ pub fn build_session_config(
         fps: params.fps,
         bitrate_bps: params.bitrate_bps,
         prefer_hardware: true,
-        clipboard_enabled: false, // M3.4 剪贴板后端落地后开启
-        audio_enabled: false,     // M3.5 WASAPI 播放器落地后开启
+        // M3.4：rc-clipboard-win 已实装，默认开启（运行时经 SetClipboardEnabled 开关）
+        clipboard_enabled: true,
+        audio_enabled: false, // M3.5 WASAPI 播放器落地后开启
         encrypt_connection: true,
         mtls_config: Some(mtls_config),
         owner_grant: None,
