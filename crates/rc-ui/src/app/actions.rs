@@ -49,6 +49,8 @@ pub(crate) enum Action {
     BannerDisconnect,
     SessionDisconnect,
     SessionReconnect,
+    SessionQualityToggle,
+    StreamQualityChanged,
 }
 
 pub(crate) enum Event {

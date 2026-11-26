@@ -169,6 +169,60 @@ pub fn view_state_of(update: &SessionUpdate, current: &SessionView) -> SessionVi
     }
 }
 
+/// 会话画质状态（由 `SessionUpdate::DisplayConfig` 归纳；被控端权威数据）。
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct QualityState {
+    /// 被控端预设列表 `(宽, 高, 标签)`，严格原生宽高比、由高到低。
+    pub presets: Vec<(u32, u32, String)>,
+    /// 当前生效流宽（像素）。
+    pub width: u32,
+    /// 当前生效流高（像素）。
+    pub height: u32,
+    /// 当前生效帧率。
+    pub fps: u32,
+    /// 被控端允许的最高帧率。
+    pub max_fps: u32,
+    /// 当前编码器（`"h264"` / `"hevc"`；旧版被控端未上报时 `None`）。
+    pub codec: Option<String>,
+    /// 被控端支持编码器列表（如 `["hevc", "h264"]`）。
+    pub supported_codecs: Vec<String>,
+    /// 控制端硬件解码路径是否支持 HEVC。
+    pub client_supports_hevc: bool,
+}
+
+/// 预钳制流参数请求（ios 踩坑：越界请求被控端静默无流）。
+///
+/// 规则：`0` = 保持当前；尺寸必须等于当前值或命中 presets；fps ≤ max_fps。
+/// 返回 `None` 表示请求非法，调用方不得下发。
+pub fn clamp_stream_request(
+    width: u32,
+    height: u32,
+    fps: u32,
+    state: &QualityState,
+) -> Option<(u32, u32, u32)> {
+    let size_ok = (width == 0 && height == 0)
+        || (width == state.width && height == state.height)
+        || state
+            .presets
+            .iter()
+            .any(|(w, h, _)| *w == width && *h == height);
+    if !size_ok {
+        return None;
+    }
+    if fps != 0 && (state.max_fps != 0 && fps > state.max_fps) {
+        return None;
+    }
+    Some((width, height, fps))
+}
+
+/// 按被控端 max_fps 生成帧率候选（30/60/120/144/240 过滤）。
+pub fn fps_candidates(max_fps: u32) -> Vec<u32> {
+    [30u32, 60, 120, 144, 240]
+        .into_iter()
+        .filter(|v| max_fps == 0 || *v <= max_fps)
+        .collect()
+}
+
 /// HUD 快照 → 两行等宽文本（纯函数可单测；core 契约：UI 只格式化）。
 ///
 /// 形如：
@@ -241,6 +295,46 @@ pub fn join_session(handle: SessionHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stream_request_clamping() {
+        let state = QualityState {
+            presets: vec![
+                (1920, 1080, "1920×1080".into()),
+                (1280, 720, "1280×720".into()),
+            ],
+            width: 1920,
+            height: 1080,
+            fps: 60,
+            max_fps: 120,
+            ..Default::default()
+        };
+        // 命中预设 + 合法帧率
+        assert_eq!(
+            clamp_stream_request(1280, 720, 60, &state),
+            Some((1280, 720, 60))
+        );
+        // 0 = 保持当前
+        assert_eq!(clamp_stream_request(0, 0, 0, &state), Some((0, 0, 0)));
+        // 当前尺寸本身合法
+        assert_eq!(
+            clamp_stream_request(1920, 1080, 120, &state),
+            Some((1920, 1080, 120))
+        );
+        // 越界尺寸（ios 踩坑：不得下发）
+        assert_eq!(clamp_stream_request(2560, 1440, 60, &state), None);
+        // 帧率超 max_fps
+        assert_eq!(clamp_stream_request(0, 0, 240, &state), None);
+        // 长宽不匹配（512×1080 不在预设）
+        assert_eq!(clamp_stream_request(512, 1080, 60, &state), None);
+    }
+
+    #[test]
+    fn fps_candidates_filter_by_max() {
+        assert_eq!(fps_candidates(240), vec![30, 60, 120, 144, 240]);
+        assert_eq!(fps_candidates(60), vec![30, 60]);
+        assert_eq!(fps_candidates(0), vec![30, 60, 120, 144, 240]); // 未上报 → 全量
+    }
 
     #[test]
     fn bitrate_presets_map() {

@@ -275,6 +275,224 @@ impl App {
         let _ = self.set_visible("SessionHudPanel", true);
     }
 
+    /// 画质工具条：按被控端 DisplayConfig 重建候选并回填选中态。
+    ///
+    /// 候选列表仅在被控端能力（预设/编解码/最高帧率）变化时重建；
+    /// 选中态每次 DisplayConfig 到达都对齐（热切换后被控端回传权威值）。
+    pub(crate) fn sync_quality_bar(&mut self) -> Result<()> {
+        use windows::UI::Xaml::Controls::ComboBox;
+
+        let sig = format!(
+            "{:x}|{:?}|{}|{:?}",
+            {
+                // 稳定签名：预设列表 + 编解码支持 + 最高帧率
+                let mut acc: u64 = 14695981039346656037;
+                for (w, h, l) in &self.quality.presets {
+                    for byte in format!("{w}x{h}{l}").bytes() {
+                        acc ^= byte as u64;
+                        acc = acc.wrapping_mul(1099511628211);
+                    }
+                }
+                acc
+            },
+            self.quality.supported_codecs,
+            self.quality.max_fps,
+            self.quality.client_supports_hevc
+        );
+        if sig != self.quality_sig {
+            self.quality_sig = sig;
+            // 分辨率：跟随当前 + 预设
+            let mut res_labels = vec!["跟随当前".to_string()];
+            res_labels.extend(self.quality.presets.iter().map(|(_, _, l)| l.clone()));
+            self.reset_combo_items("StreamResolutionBox", &res_labels)?;
+            // 帧率：跟随当前 + 候选
+            let mut fps_labels = vec!["跟随当前".to_string()];
+            fps_labels.extend(self.quality_fps_options.iter().map(|v| format!("{v} fps")));
+            self.reset_combo_items("StreamFpsBox", &fps_labels)?;
+            // 码率：与设置页同源
+            self.reset_combo_items(
+                "StreamBitrateBox",
+                &[
+                    "自适应".to_string(),
+                    "8 Mbps".to_string(),
+                    "14 Mbps".to_string(),
+                    "30 Mbps".to_string(),
+                ],
+            )?;
+            // 编解码：被控端支持列表；未上报 → 单项"自动"禁用
+            let codec_labels: Vec<String> = if self.quality.supported_codecs.is_empty() {
+                vec!["自动".to_string()]
+            } else {
+                let mut v = vec!["跟随当前".to_string()];
+                v.extend(
+                    self.quality
+                        .supported_codecs
+                        .iter()
+                        .map(|c| match c.as_str() {
+                            "hevc" => "HEVC".to_string(),
+                            "h264" => "H.264".to_string(),
+                            other => other.to_uppercase(),
+                        }),
+                );
+                v
+            };
+            self.reset_combo_items("StreamCodecBox", &codec_labels)?;
+            if let Some(box_) = self.find_opt::<ComboBox>("StreamCodecBox") {
+                let _ = box_
+                    .cast::<windows::UI::Xaml::Controls::Control>()?
+                    .SetIsEnabled(!self.quality.supported_codecs.is_empty());
+            }
+        }
+
+        // 回填选中态（对齐被控端权威值）
+        let res_index = self
+            .quality
+            .presets
+            .iter()
+            .position(|(w, h, _)| *w == self.quality.width && *h == self.quality.height)
+            .map(|i| i as i32 + 1)
+            .unwrap_or(0);
+        let fps_index = self
+            .quality_fps_options
+            .iter()
+            .position(|v| *v == self.quality.fps)
+            .map(|i| i as i32 + 1)
+            .unwrap_or(0);
+        let bitrate_preset = self.prefs.lock().unwrap().bitrate_preset.clone();
+        let bitrate_index = match bitrate_preset.as_str() {
+            "8m" => 1,
+            "14m" => 2,
+            "30m" => 3,
+            _ => 0,
+        };
+        let codec_index = self
+            .quality
+            .codec
+            .as_deref()
+            .and_then(|c| self.quality.supported_codecs.iter().position(|s| s == c))
+            .map(|i| i as i32 + 1)
+            .unwrap_or(0);
+        for (name, index) in [
+            ("StreamResolutionBox", res_index),
+            ("StreamFpsBox", fps_index),
+            ("StreamBitrateBox", bitrate_index),
+            ("StreamCodecBox", codec_index),
+        ] {
+            if let Some(selector) = self.find_opt::<ComboBox>(name).and_then(|b| {
+                b.cast::<windows::UI::Xaml::Controls::Primitives::Selector>()
+                    .ok()
+            }) {
+                let _ = selector.SetSelectedIndex(index);
+            }
+        }
+        Ok(())
+    }
+
+    /// 重置下拉候选（清空后按标签重建）。
+    fn reset_combo_items(&self, name: &str, labels: &[String]) -> Result<()> {
+        use windows::core::HSTRING;
+        use windows::UI::Xaml::Controls::{ComboBox, ComboBoxItem, ContentControl, ItemsControl};
+        let Some(box_) = self.find_opt::<ComboBox>(name) else {
+            return Ok(());
+        };
+        let items = box_.cast::<ItemsControl>()?.Items()?;
+        while items.Size()? > 0 {
+            items.RemoveAtEnd()?;
+        }
+        for label in labels {
+            let item = ComboBoxItem::new()?;
+            let content = windows::Foundation::PropertyValue::CreateString(HSTRING::from(label))?;
+            item.cast::<ContentControl>()?.SetContent(content)?;
+            items.Append(&item)?;
+        }
+        Ok(())
+    }
+
+    /// 画质下拉变更：读全部四个选择 → 预钳制 → 下发（选择与当前生效值一致时跳过，
+    /// 避免程序化回填触发 SetStreamParams 空切换）。
+    pub(crate) fn on_quality_changed(&mut self) -> Result<()> {
+        use windows::UI::Xaml::Controls::{ComboBox, Primitives};
+        if !matches!(self.session_view, SessionView::Negotiated { .. }) {
+            return Ok(());
+        }
+        let Some(active) = self.session.as_ref() else {
+            return Ok(());
+        };
+        let handle = &active.handle;
+
+        let selected = |name: &str| -> i32 {
+            self.find_opt::<ComboBox>(name)
+                .and_then(|b| b.cast::<Primitives::Selector>().ok())
+                .and_then(|s| s.SelectedIndex().ok())
+                .unwrap_or(-1)
+        };
+        let res_idx = selected("StreamResolutionBox");
+        let fps_idx = selected("StreamFpsBox");
+        let bitrate_idx = selected("StreamBitrateBox");
+        let codec_idx = selected("StreamCodecBox");
+
+        // 分辨率 + 帧率：0/负 = 跟随当前
+        let want = match res_idx {
+            i if i > 0 => {
+                let Some((w, h, _)) = self.quality.presets.get(i as usize - 1) else {
+                    return Ok(());
+                };
+                (*w, *h)
+            }
+            _ => (0, 0),
+        };
+        let fps = match fps_idx {
+            i if i > 0 => self
+                .quality_fps_options
+                .get(i as usize - 1)
+                .copied()
+                .unwrap_or(0),
+            _ => 0,
+        };
+        // 选中态与当前生效值一致 → 程序化回填/用户无操作，跳过
+        let unchanged = match want {
+            (0, 0) => fps == 0,
+            (w, h) => {
+                w == self.quality.width
+                    && h == self.quality.height
+                    && (fps == 0 || fps == self.quality.fps)
+            }
+        };
+        if unchanged {
+            return Ok(());
+        }
+        // 预钳制（ios 踩坑：越界静默无流，绝不直接透传）
+        let Some((w, h, fps)) = sess::clamp_stream_request(want.0, want.1, fps, &self.quality)
+        else {
+            return Ok(());
+        };
+        if w != 0 || h != 0 || fps != 0 {
+            handle.send(
+                rc_client_core::session_bridge::SessionCommand::SetStreamParams {
+                    width: w,
+                    height: h,
+                    fps,
+                },
+            );
+        }
+        // 码率：自适应(0) 不下发
+        let bps = [0u32, 8_000_000, 14_000_000, 30_000_000][bitrate_idx.clamp(0, 3) as usize];
+        if bps != 0 {
+            handle.send(rc_client_core::session_bridge::SessionCommand::SetBitrate { bps });
+        }
+        // 编解码：跟随当前(0) 不下发
+        if codec_idx > 0 {
+            if let Some(codec) = self.quality.supported_codecs.get(codec_idx as usize - 1) {
+                let codec = match codec.as_str() {
+                    "hevc" => rc_client_core::display_ctrl::StreamCodec::Hevc,
+                    _ => rc_client_core::display_ctrl::StreamCodec::H264,
+                };
+                handle.send(rc_client_core::session_bridge::SessionCommand::SetCodec { codec });
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn set_session_overlay(&self, text: &str, spinner: bool) {
         let _ = self.label("SessionOverlayText", text);
         if let Some(ring) =

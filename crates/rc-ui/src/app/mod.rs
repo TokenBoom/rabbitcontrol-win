@@ -78,6 +78,9 @@ pub struct App {
     session: Option<ActiveSession>,
     session_view: SessionView,
     session_hud: Option<rc_client_core::hud::HudSnapshot>,
+    quality: sess::QualityState,
+    quality_fps_options: Vec<u32>,
+    quality_sig: String,
     peer_watch_only: bool,
     pressed_keys: Vec<u16>,
     pressed_buttons: Vec<u8>,
@@ -131,6 +134,9 @@ impl App {
             session: None,
             session_view: SessionView::Idle,
             session_hud: None,
+            quality: sess::QualityState::default(),
+            quality_fps_options: Vec::new(),
+            quality_sig: String::new(),
             peer_watch_only: false,
             pressed_keys: Vec::new(),
             pressed_buttons: Vec::new(),
@@ -267,6 +273,25 @@ impl App {
         // 会话工具条
         self.click("SessionDisconnect", Action::SessionDisconnect)?;
         self.click("SessionReconnect", Action::SessionReconnect)?;
+        self.click("SessionQuality", Action::SessionQualityToggle)?;
+        // M3.2 画质工具条：任一下拉变更 → 统一预钳制后下发
+        for name in [
+            "StreamResolutionBox",
+            "StreamFpsBox",
+            "StreamBitrateBox",
+            "StreamCodecBox",
+        ] {
+            let sender = self.sender();
+            let combo: windows::UI::Xaml::Controls::Primitives::Selector =
+                self.root.FindName(name)?.cast()?;
+            combo.SelectionChanged(
+                windows::UI::Xaml::Controls::SelectionChangedEventHandler::new(move |_, _| {
+                    let sender = sender.clone();
+                    sender.send(Event::Click(Action::StreamQualityChanged));
+                    Ok(())
+                }),
+            )?;
+        }
         // 会话舞台输入（M2：鼠标 + 滚轮 + 键盘；watch_only 时不发送）
         {
             let sender = self.sender();
@@ -647,6 +672,35 @@ impl App {
                     active.video = Some((*width, *height));
                 }
             }
+            // M3.2：被控端显示能力（首次入流与每次热切换后回传）→ 画质工具条
+            if let SessionUpdate::DisplayConfig {
+                width,
+                height,
+                fps,
+                max_fps,
+                presets,
+                codec,
+                supported_codecs,
+                client_supports_hevc,
+                ..
+            } = &update
+            {
+                self.quality = sess::QualityState {
+                    presets: presets
+                        .iter()
+                        .map(|p| (p.width, p.height, p.label.clone()))
+                        .collect(),
+                    width: *width,
+                    height: *height,
+                    fps: *fps,
+                    max_fps: *max_fps,
+                    codec: codec.clone(),
+                    supported_codecs: supported_codecs.clone(),
+                    client_supports_hevc: *client_supports_hevc,
+                };
+                self.quality_fps_options = sess::fps_candidates(*max_fps);
+                self.sync_quality_bar()?;
+            }
             if matches!(update, SessionUpdate::Ended { .. }) {
                 session_running = false;
             }
@@ -766,6 +820,18 @@ impl App {
                 if let Some(target) = target {
                     self.start_session(&target)?;
                 }
+                Ok(())
+            }
+            Action::SessionQualityToggle => {
+                let visible = self
+                    .find_opt::<UIElement>("QualityBar")
+                    .and_then(|e| e.Visibility().ok())
+                    .map(|v| v != Visibility::Visible)
+                    .unwrap_or(false);
+                self.set_visible("QualityBar", visible)
+            }
+            Action::StreamQualityChanged => {
+                self.on_quality_changed()?;
                 Ok(())
             }
             Action::DeviceToggleFav(device_id) => {
