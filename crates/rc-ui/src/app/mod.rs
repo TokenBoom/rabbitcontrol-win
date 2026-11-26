@@ -87,6 +87,10 @@ pub struct App {
     reconnect_attempts: u32,
     /// 用户主动断开 → 不自动重连。
     manual_disconnect: bool,
+    /// M3.6 独立会话窗口宿主。
+    session_host: Option<crate::ui::session_window::SessionWindow>,
+    /// 会话窗口是否处于全屏（Esc 退出用）。
+    fullscreen: bool,
     peer_watch_only: bool,
     pressed_keys: Vec<u16>,
     pressed_buttons: Vec<u8>,
@@ -147,6 +151,8 @@ impl App {
             reconnect_target: None,
             reconnect_attempts: 0,
             manual_disconnect: false,
+            session_host: None,
+            fullscreen: false,
             peer_watch_only: false,
             pressed_keys: Vec::new(),
             pressed_buttons: Vec::new(),
@@ -159,6 +165,7 @@ impl App {
         })?;
         eprintln!("[App::new] wire OK");
         app.apply_brand();
+        crate::ui::session_window::set_main_hwnd(shell.hwnd());
         app.update_caption()?;
         app.apply_scale()?;
         if app.auth.has_saved_session() {
@@ -280,10 +287,22 @@ impl App {
         self.switch_toggled("LockOnExitToggle", Action::LockOnExitToggled(true))?;
         self.click("ProbeServer", Action::ProbeServer)?;
         self.click("BannerDisconnect", Action::BannerDisconnect)?;
-        // 会话工具条
+        Ok(())
+    }
+
+    /// M3.6：会话窗口创建后的专属接线（元素全部位于会话窗口根；
+    /// wire() 在 App::new 时执行，彼时会话窗口尚不存在，故独立于此绑定）。
+    fn wire_session_window(&mut self) -> Result<()> {
+        let hwnd = self
+            .session_host
+            .as_ref()
+            .map(|h| h.hwnd())
+            .ok_or_else(windows::core::Error::from_win32)?;
+        // 会话工具条（元素位于会话窗口根，find() 自动路由）
         self.click("SessionDisconnect", Action::SessionDisconnect)?;
         self.click("SessionReconnect", Action::SessionReconnect)?;
         self.click("SessionQuality", Action::SessionQualityToggle)?;
+        self.click("SessionFullscreen", Action::SessionFullscreen)?;
         // M3.2 画质工具条：任一下拉变更 → 统一预钳制后下发
         for name in [
             "StreamResolutionBox",
@@ -292,8 +311,7 @@ impl App {
             "StreamCodecBox",
         ] {
             let sender = self.sender();
-            let combo: windows::UI::Xaml::Controls::Primitives::Selector =
-                self.root.FindName(name)?.cast()?;
+            let combo: windows::UI::Xaml::Controls::Primitives::Selector = self.find(name)?;
             combo.SelectionChanged(
                 windows::UI::Xaml::Controls::SelectionChangedEventHandler::new(move |_, _| {
                     let sender = sender.clone();
@@ -305,8 +323,7 @@ impl App {
         // 会话舞台尺寸变化 → StageRect（渲染器 letterbox 基准，物理像素）
         {
             let sender = self.sender();
-            let hwnd = self.hwnd;
-            let panel: SwapChainPanel = self.root.FindName("SessionPanel")?.cast()?;
+            let panel: SwapChainPanel = self.find("SessionPanel")?;
             let panel_fe: windows::UI::Xaml::FrameworkElement = panel.cast()?;
             panel_fe.SizeChanged(windows::UI::Xaml::SizeChangedEventHandler::new(
                 move |_, args| {
@@ -326,7 +343,7 @@ impl App {
         {
             let sender = self.sender();
             let combo: windows::UI::Xaml::Controls::Primitives::Selector =
-                self.root.FindName("StreamMouseBox")?.cast()?;
+                self.find("StreamMouseBox")?;
             combo.SelectionChanged(
                 windows::UI::Xaml::Controls::SelectionChangedEventHandler::new(move |_, _| {
                     let sender = sender.clone();
@@ -338,7 +355,7 @@ impl App {
         // 会话舞台输入（M2：鼠标 + 滚轮 + 键盘；watch_only 时不发送）
         {
             let sender = self.sender();
-            let panel: SwapChainPanel = self.root.FindName("SessionPanel")?.cast()?;
+            let panel: SwapChainPanel = self.find("SessionPanel")?;
             let panel_ui: UIElement = panel.cast()?;
             let sender_moved = sender.clone();
             panel_ui.PointerMoved(PointerEventHandler::new(move |_, args| {
@@ -424,7 +441,7 @@ impl App {
         {
             // 键盘：挂在 SessionStage（面板获得焦点或点击后生效）。
             let sender = self.sender();
-            let stage: UIElement = self.root.FindName("SessionStage")?.cast()?;
+            let stage: UIElement = self.find("SessionStage")?;
             let sender_down = sender.clone();
             stage.KeyDown(KeyEventHandler::new(move |_, args| {
                 if let Some(args) = args {
@@ -517,12 +534,31 @@ impl App {
         Ok(())
     }
 
-    fn find<T: Interface>(&self, name: &str) -> Result<T> {
-        self.root.FindName(name)?.cast()
+    fn find_opt<T: Interface>(&self, name: &str) -> Option<T> {
+        self.find_in(&self.root, name).or_else(|| {
+            self.session_host
+                .as_ref()
+                .and_then(|host| self.find_in(&host.root, name))
+        })
     }
 
-    fn find_opt<T: Interface>(&self, name: &str) -> Option<T> {
-        self.root.FindName(name).ok()?.cast().ok()
+    /// M3.6：主窗口与独立会话窗口双根查找（会话 UI 元素迁入会话窗口）。
+    fn find<T: Interface>(&self, name: &str) -> Result<T> {
+        if let Some(found) = self.find_in(&self.root, name) {
+            return Ok(found);
+        }
+        if let Some(host) = &self.session_host {
+            if let Some(found) = self.find_in(&host.root, name) {
+                return Ok(found);
+            }
+        }
+        // 未找到：走原路径返回原始错误（保持既有错误语义）
+        let element = self.root.FindName(name)?;
+        element.cast()
+    }
+
+    fn find_in<T: Interface>(&self, root: &FrameworkElement, name: &str) -> Option<T> {
+        root.FindName(name).ok().and_then(|e| e.cast().ok())
     }
 
     fn label(&self, name: &str, value: &str) -> Result<()> {
@@ -643,6 +679,7 @@ impl App {
                     match launch.result {
                         Ok(handle) => {
                             let watch_only = self.peer_watch_only;
+                            self.ensure_session_window(&target_name)?;
                             self.session = Some(ActiveSession {
                                 handle,
                                 video: None,
@@ -652,8 +689,6 @@ impl App {
                             });
                             self.session_view = SessionView::Idle;
                             self.session_hud = None;
-                            self.page = Page::Session;
-                            self.show_page(Page::Session)?;
                             self.apply_session_view();
                         }
                         Err(message) => {
@@ -672,6 +707,18 @@ impl App {
     }
 
     fn on_tick(&mut self) -> Result<()> {
+        // M3.6：会话窗口关闭确认 → 释放输入 + 断开 + 销毁窗口
+        if crate::ui::session_window::take_close_request() {
+            self.release_pressed_input();
+            self.manual_disconnect = true;
+            self.pending_reconnect_tick = None;
+            if let Some(active) = self.session.as_ref() {
+                sess::disconnect(&active.handle);
+            }
+            if let Some(host) = self.session_host.take() {
+                host.close();
+            }
+        }
         if !self.logged_in {
             return Ok(());
         }
@@ -911,6 +958,12 @@ impl App {
                 let target = self.session.as_ref().map(|s| s.target_id.clone());
                 if let Some(target) = target {
                     self.start_session(&target)?;
+                }
+                Ok(())
+            }
+            Action::SessionFullscreen => {
+                if let Some(host) = self.session_host.as_ref() {
+                    self.fullscreen = host.toggle_fullscreen();
                 }
                 Ok(())
             }

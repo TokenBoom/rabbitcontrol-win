@@ -20,7 +20,6 @@ impl App {
         self.set_visible("AssistPage", page == Page::Assist)?;
         self.set_visible("FavoritesPage", page == Page::Favorites)?;
         self.set_visible("SettingsPage", page == Page::Settings)?;
-        self.set_visible("SessionPage", page == Page::Session)?;
         self.select_nav(page)?;
         if page == Page::Favorites {
             self.render_favorites()?;

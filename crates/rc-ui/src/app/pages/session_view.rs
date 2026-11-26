@@ -82,6 +82,10 @@ impl App {
     }
 
     pub(crate) fn on_session_key(&mut self, event: SessionKeyEvent) -> Result<()> {
+        // Esc：全屏态下本地消费（退出全屏，不注入远端）
+        if event.pressed && event.key == VirtualKey::Escape && self.exit_fullscreen_if_active() {
+            return Ok(());
+        }
         let Some(active) = self.session.as_ref() else {
             return Ok(());
         };
@@ -150,6 +154,35 @@ impl App {
         self.pressed_modifiers = 0;
     }
 
+    /// M3.6：确保独立会话窗口存在并显示（复用既有窗口；首次创建后接线）。
+    pub(crate) fn ensure_session_window(&mut self, title: &str) -> Result<()> {
+        if self.session_host.is_none() {
+            self.session_host = Some(crate::ui::session_window::SessionWindow::new().map_err(
+                |e| {
+                    eprintln!("[session_window] 创建失败：{e}");
+                    e
+                },
+            )?);
+            self.wire_session_window()?;
+        }
+        if let Some(host) = self.session_host.as_ref() {
+            host.set_title(&format!("{title} - RabbitControl 远程"));
+            host.show();
+        }
+        Ok(())
+    }
+
+    /// Esc 退出全屏（在注入远端之前本地消费）。
+    fn exit_fullscreen_if_active(&mut self) -> bool {
+        if !self.fullscreen {
+            return false;
+        }
+        if let Some(host) = self.session_host.as_ref() {
+            self.fullscreen = host.toggle_fullscreen();
+        }
+        true
+    }
+
     pub(crate) fn start_session(&mut self, code: &str) -> Result<()> {
         if !self.logged_in {
             self.label("AssistError", "请先登录。")?;
@@ -195,8 +228,8 @@ impl App {
             .unwrap_or_else(|| code.to_string());
         self.set_session_overlay("正在连接…", true);
         let _ = self.set_visible("SessionReconnect", false);
-        self.page = Page::Session;
-        self.show_page(Page::Session)?;
+        // M3.6：会话 UI 迁入独立窗口；主窗口留在当前页
+        self.ensure_session_window(&name)?;
         let manager = self.auth.manager();
         let runtime = Arc::clone(&self.runtime);
         let events = self.sender();

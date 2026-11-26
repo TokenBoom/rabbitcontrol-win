@@ -17,7 +17,6 @@ pub(crate) enum Page {
     Assist,
     Favorites,
     Settings,
-    Session,
 }
 
 #[derive(Clone)]
@@ -53,6 +52,7 @@ pub(crate) enum Action {
     StreamQualityChanged,
     MouseModeChanged,
     StageRectChanged(u32, u32),
+    SessionFullscreen,
 }
 
 pub(crate) enum Event {
