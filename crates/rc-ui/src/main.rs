@@ -44,6 +44,14 @@ fn run() -> Result<(), Box<dyn Error>> {
 }
 
 fn main() {
+    // M6：--version 供打包脚本读取版本（XAML 初始化前退出）
+    if std::env::args()
+        .skip(1)
+        .any(|arg| arg == "--version" || arg == "-V")
+    {
+        println!("rabbitcontrol-win {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     let result = unsafe {
         windows::Win32::System::WinRT::RoInitialize(
             windows::Win32::System::WinRT::RO_INIT_SINGLETHREADED,

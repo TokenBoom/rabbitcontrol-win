@@ -108,6 +108,8 @@ pub struct App {
     approval_generation: Option<u64>,
     /// 被控会话起始 tick（Banner 计时）。
     host_session_start_tick: u64,
+    /// 重命名浮层目标设备。
+    rename_target: Option<String>,
     peer_watch_only: bool,
     pressed_keys: Vec<u16>,
     pressed_buttons: Vec<u8>,
@@ -182,6 +184,7 @@ impl App {
             host_rt: crate::biz::host::HostRuntime::new(),
             approval_generation: None,
             host_session_start_tick: 0,
+            rename_target: None,
             peer_watch_only: false,
             pressed_keys: Vec::new(),
             pressed_buttons: Vec::new(),
@@ -316,6 +319,8 @@ impl App {
         self.switch_toggled("LockOnExitToggle", Action::LockOnExitToggled(true))?;
         self.switch_toggled("HostSwitch", Action::HostToggle(true))?;
         self.click("HostApprove", Action::HostApprove)?;
+        self.click("RenamePromptOk", Action::RenamePromptOk)?;
+        self.click("RenamePromptCancel", Action::RenamePromptCancel)?;
         self.click("HostReject", Action::HostReject)?;
         self.click("ProbeServer", Action::ProbeServer)?;
         self.click("BannerDisconnect", Action::BannerDisconnect)?;
@@ -950,6 +955,14 @@ impl App {
         self.tick += 1;
         let generation = self.runtime.generation();
         let events = self.runtime.poll();
+        // M5：信令入站中继桥接（被控开关未开 → 快速拒绝）
+        for incoming in events.host_incoming {
+            crate::biz::host::bridge_relay_incoming(
+                self.host_rt.handle.as_ref(),
+                incoming,
+                &self.auth.manager(),
+            );
+        }
         if let Some(reason) = events.kicked_reason {
             self.auth.stop_maintainer();
             self.runtime.stop();
@@ -1272,17 +1285,39 @@ impl App {
                 self.render_history()
             }
             Action::DeviceRename(device_id) => {
-                let input = prompt_text("重命名设备");
-                if let Some(alias) = input.filter(|alias| !alias.trim().is_empty()) {
-                    self.set_busy(true)?;
-                    let manager = self.auth.manager();
-                    let events = self.sender();
-                    thread::spawn(move || {
-                        let result = auth::rename_device(&manager, &device_id, alias.trim());
-                        events.send(Event::DeviceActionFinished(result));
-                    });
+                // 浮层输入（原 prompt_text stub 返回 None 导致功能不可用）
+                self.rename_target = Some(device_id);
+                if let Some(box_) =
+                    self.find_opt::<windows::UI::Xaml::Controls::TextBox>("RenamePromptInput")
+                {
+                    let _ = box_.SetText(HSTRING::new());
+                }
+                self.set_visible("RenamePromptOverlay", true)
+            }
+            Action::RenamePromptOk => {
+                let value = self
+                    .find_opt::<windows::UI::Xaml::Controls::TextBox>("RenamePromptInput")
+                    .and_then(|b| b.Text().ok())
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                self.set_visible("RenamePromptOverlay", false)?;
+                if let Some(device_id) = self.rename_target.take() {
+                    let alias = value.trim().to_string();
+                    if !alias.is_empty() {
+                        self.set_busy(true)?;
+                        let manager = self.auth.manager();
+                        let events = self.sender();
+                        thread::spawn(move || {
+                            let result = auth::rename_device(&manager, &device_id, &alias);
+                            events.send(Event::DeviceActionFinished(result));
+                        });
+                    }
                 }
                 Ok(())
+            }
+            Action::RenamePromptCancel => {
+                self.rename_target = None;
+                self.set_visible("RenamePromptOverlay", false)
             }
             Action::DeviceUnbind(device_id) => {
                 self.set_busy(true)?;
@@ -1446,10 +1481,6 @@ fn copy_to_clipboard(text: &str) {
         .SetText(HSTRING::from(text))
         .expect("填充剪贴板文本");
     let _ = Clipboard::SetContent(&package);
-}
-
-fn prompt_text(_title: &str) -> Option<String> {
-    None
 }
 
 #[cfg(test)]

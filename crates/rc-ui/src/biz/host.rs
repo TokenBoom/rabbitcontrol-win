@@ -157,6 +157,27 @@ fn build_owner_verifier(
     Some(Arc::new(verifier))
 }
 
+/// 中继连入桥接：host 在运行时移交，否则用本端证书快速拒绝（H10：避免对端空等超时）。
+pub fn bridge_relay_incoming(
+    handle: Option<&HostHandle>,
+    incoming: rc_client_core::signal_client::RelayIncoming,
+    manager: &AuthSessionManager,
+) {
+    if let Some(handle) = handle {
+        handle.offer_relay_incoming(incoming);
+        return;
+    }
+    let mtls = build_mtls(manager)
+        .ok()
+        .map(|b| rc_client_core::relay_transport::RelayMtlsConfig {
+            ca_cert_pem: b.ca_cert_pem,
+            client_cert_pem: b.cert_pem,
+            client_key_pem: b.key_pem,
+            server_name: None,
+        });
+    rc_client_core::relay_transport::reject_relay_incoming_fast(incoming, mtls);
+}
+
 /// 审批应答超时占位（对齐 core 常量语义）。
 #[allow(dead_code)]
 pub const APPROVAL_WAIT: Duration = Duration::from_secs(30);

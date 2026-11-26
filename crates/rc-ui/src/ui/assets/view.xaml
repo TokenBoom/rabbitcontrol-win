@@ -421,6 +421,19 @@
           </StackPanel>
         </Border>
       </Grid>
+      <!-- 重命名输入浮层（prompt stub 修复：原返回 None 导致重命名不可用） -->
+      <Grid x:Name="RenamePromptOverlay" Grid.RowSpan="2" Visibility="Collapsed" Background="#88000000">
+        <Border Width="360" Background="White" CornerRadius="10" Padding="18">
+          <StackPanel Spacing="10">
+            <TextBlock Text="重命名设备" Style="{StaticResource SubtitleText}"/>
+            <TextBox x:Name="RenamePromptInput" Height="34"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+              <Button x:Name="RenamePromptCancel" Content="取消" Style="{StaticResource SecondaryButton}" Height="32"/>
+              <Button x:Name="RenamePromptOk" Content="确定" Style="{StaticResource PrimaryButton}" Height="32" Width="90"/>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+      </Grid>
       <!-- 会话 UI 已迁移至独立窗口（ui/assets/session_window.xaml，M3.6） -->
 
     </Grid>

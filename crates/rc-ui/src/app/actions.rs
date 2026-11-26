@@ -68,6 +68,8 @@ pub(crate) enum Action {
     HostToggle(bool),
     HostApprove,
     HostReject,
+    RenamePromptOk,
+    RenamePromptCancel,
 }
 
 pub(crate) enum Event {

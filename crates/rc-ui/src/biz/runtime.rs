@@ -12,8 +12,8 @@ use rc_client_core::auth_client::AuthSessionManager;
 use rc_client_core::lan_discovery::LanDiscoveryHandle;
 use rc_client_core::server_config::ServerStatusSnapshot;
 use rc_client_core::signal_client::{
-    ConnectGrant, DeviceStatusEvent, SignalClientHandle, SignalClientOptions, TokenProvider,
-    TokenRefresher,
+    ConnectGrant, DeviceStatusEvent, RelayIncoming, SignalClientHandle, SignalClientOptions,
+    TokenProvider, TokenRefresher,
 };
 
 use crate::biz::auth;
@@ -27,6 +27,8 @@ pub struct RuntimeEvents {
     pub device_events: Vec<DeviceStatusEvent>,
     /// 被服务端踢下线的原因（改密/解绑/吊销等），触发回登录页。
     pub kicked_reason: Option<String>,
+    /// M5：入站中继会话请求（本端作为被控端），App 决定 offer 给 host 或快速拒绝。
+    pub host_incoming: Vec<RelayIncoming>,
 }
 
 struct Inner {
@@ -150,6 +152,10 @@ impl SignalRuntime {
             }
             if let Some(reason) = signal.try_recv_kicked_reason() {
                 events.kicked_reason = Some(reason);
+            }
+            // M5：入站中继连入排空（被控端桥接）
+            while let Some(incoming) = signal.try_recv_incoming() {
+                events.host_incoming.push(incoming);
             }
         }
         events
