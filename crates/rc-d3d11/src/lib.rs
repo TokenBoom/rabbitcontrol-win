@@ -16,14 +16,11 @@ pub mod probe;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use windows::core::Interface;
-use windows::Win32::Graphics::Direct3D::{
-    D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP,
-};
+use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP};
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11CreateDevice, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
-    D3D11_BIND_SHADER_RESOURCE, D3D11_TEXTURE2D_DESC,
-    D3D11_USAGE_DEFAULT, ID3D11Device, ID3D11DeviceContext, ID3D11Multithread,
-    ID3D11Texture2D,
+    D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11Multithread, ID3D11Texture2D,
+    D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
+    D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12;
 
@@ -68,7 +65,10 @@ impl SharedDevice {
     }
 
     fn create() -> std::result::Result<SharedDevice, String> {
-        let attempts: [(DeviceKind, windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE); 2] = [
+        let attempts: [(
+            DeviceKind,
+            windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE,
+        ); 2] = [
             (DeviceKind::Hardware, D3D_DRIVER_TYPE_HARDWARE),
             (DeviceKind::Warp, D3D_DRIVER_TYPE_WARP),
         ];
@@ -125,12 +125,20 @@ impl SharedDevice {
 
     /// 设备 COM 引用（Clone，借用安全）。
     pub fn device(&self) -> ID3D11Device {
-        self.inner.lock().expect("shared device lock").device.clone()
+        self.inner
+            .lock()
+            .expect("shared device lock")
+            .device
+            .clone()
     }
 
     /// 上下文 COM 引用（Clone，借用安全）。
     pub fn context(&self) -> ID3D11DeviceContext {
-        self.inner.lock().expect("shared device lock").context.clone()
+        self.inner
+            .lock()
+            .expect("shared device lock")
+            .context
+            .clone()
     }
 
     /// 在共享设备上创建一张 NV12 纹理（解码输出落地 / 编码输入载体）。
@@ -157,13 +165,13 @@ impl SharedDevice {
         };
         let mut texture = None;
         unsafe {
-            inner.device.CreateTexture2D(&desc, None, Some(&mut texture))
+            inner
+                .device
+                .CreateTexture2D(&desc, None, Some(&mut texture))
         }
         .map_err(|err| format!("创建 NV12 纹理失败：{err:?}"))?;
         texture.ok_or_else(|| "CreateTexture2D 未返回纹理".to_string())
     }
-
-
 }
 
 /// 诊断：设备移除原因（占位枚举，M3 完善）。

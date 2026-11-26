@@ -1018,6 +1018,8 @@ dependencies = [
  "rc-decode",
  "rc-render",
  "rc-types",
+ "rc-win32core",
+ "windows 0.58.0",
 ]
 
 [[package]]
