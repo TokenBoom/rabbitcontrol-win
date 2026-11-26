@@ -747,7 +747,7 @@ dependencies = [
 [[package]]
 name = "rc-audio"
 version = "0.1.0"
-source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.14#05b7f91f35421a9dc008974ca3397ac49c6dec44"
+source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.21#147865e2c72cdd98bea5901eeb12f687d7b07362"
 dependencies = [
  "rc-types",
 ]
@@ -764,7 +764,7 @@ dependencies = [
 [[package]]
 name = "rc-capture"
 version = "0.1.0"
-source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.14#05b7f91f35421a9dc008974ca3397ac49c6dec44"
+source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.21#147865e2c72cdd98bea5901eeb12f687d7b07362"
 dependencies = [
  "rc-types",
 ]
@@ -777,6 +777,7 @@ dependencies = [
  "rc-d3d11",
  "rc-types",
  "rc-win32core",
+ "windows 0.58.0",
 ]
 
 [[package]]
@@ -784,6 +785,11 @@ name = "rc-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "rc-capture-win",
+ "rc-client-core",
+ "rc-d3d11",
+ "rc-decode-mf",
+ "rc-encode-mf",
  "rc-platform-win",
  "rc-types",
 ]
@@ -791,7 +797,7 @@ dependencies = [
 [[package]]
 name = "rc-client-core"
 version = "0.1.0"
-source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.14#05b7f91f35421a9dc008974ca3397ac49c6dec44"
+source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.21#147865e2c72cdd98bea5901eeb12f687d7b07362"
 dependencies = [
  "base64",
  "rand 0.8.8",
@@ -830,6 +836,8 @@ name = "rc-d3d11"
 version = "0.1.0"
 dependencies = [
  "rc-types",
+ "rc-win32core",
+ "windows 0.58.0",
 ]
 
 [[package]]
@@ -843,7 +851,7 @@ dependencies = [
 [[package]]
 name = "rc-decode"
 version = "0.1.0"
-source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.14#05b7f91f35421a9dc008974ca3397ac49c6dec44"
+source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.21#147865e2c72cdd98bea5901eeb12f687d7b07362"
 dependencies = [
  "rc-capture",
  "rc-types",
@@ -859,12 +867,13 @@ dependencies = [
  "rc-encode",
  "rc-types",
  "rc-win32core",
+ "windows 0.58.0",
 ]
 
 [[package]]
 name = "rc-diff"
 version = "0.1.0"
-source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.14#05b7f91f35421a9dc008974ca3397ac49c6dec44"
+source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.21#147865e2c72cdd98bea5901eeb12f687d7b07362"
 dependencies = [
  "rc-types",
 ]
@@ -872,7 +881,7 @@ dependencies = [
 [[package]]
 name = "rc-encode"
 version = "0.1.0"
-source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.14#05b7f91f35421a9dc008974ca3397ac49c6dec44"
+source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.21#147865e2c72cdd98bea5901eeb12f687d7b07362"
 dependencies = [
  "rc-capture",
  "rc-types",
@@ -887,12 +896,13 @@ dependencies = [
  "rc-encode",
  "rc-types",
  "rc-win32core",
+ "windows 0.58.0",
 ]
 
 [[package]]
 name = "rc-fec"
 version = "0.1.0"
-source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.14#05b7f91f35421a9dc008974ca3397ac49c6dec44"
+source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.21#147865e2c72cdd98bea5901eeb12f687d7b07362"
 dependencies = [
  "rc-types",
 ]
@@ -909,7 +919,7 @@ dependencies = [
 [[package]]
 name = "rc-input"
 version = "0.1.0"
-source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.14#05b7f91f35421a9dc008974ca3397ac49c6dec44"
+source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.21#147865e2c72cdd98bea5901eeb12f687d7b07362"
 dependencies = [
  "rc-net",
  "rc-types",
@@ -927,7 +937,7 @@ dependencies = [
 [[package]]
 name = "rc-net"
 version = "0.1.0"
-source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.14#05b7f91f35421a9dc008974ca3397ac49c6dec44"
+source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.21#147865e2c72cdd98bea5901eeb12f687d7b07362"
 dependencies = [
  "bytes",
  "quinn",
@@ -944,7 +954,7 @@ dependencies = [
 [[package]]
 name = "rc-pipeline"
 version = "0.1.0"
-source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.14#05b7f91f35421a9dc008974ca3397ac49c6dec44"
+source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.21#147865e2c72cdd98bea5901eeb12f687d7b07362"
 dependencies = [
  "rc-capture",
  "rc-decode",
@@ -984,7 +994,7 @@ dependencies = [
 [[package]]
 name = "rc-proto"
 version = "0.1.0"
-source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.14#05b7f91f35421a9dc008974ca3397ac49c6dec44"
+source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.21#147865e2c72cdd98bea5901eeb12f687d7b07362"
 dependencies = [
  "rc-types",
 ]
@@ -992,7 +1002,7 @@ dependencies = [
 [[package]]
 name = "rc-render"
 version = "0.1.0"
-source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.14#05b7f91f35421a9dc008974ca3397ac49c6dec44"
+source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.21#147865e2c72cdd98bea5901eeb12f687d7b07362"
 dependencies = [
  "rc-capture",
  "rc-decode",
@@ -1013,7 +1023,7 @@ dependencies = [
 [[package]]
 name = "rc-sched"
 version = "0.1.0"
-source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.14#05b7f91f35421a9dc008974ca3397ac49c6dec44"
+source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.21#147865e2c72cdd98bea5901eeb12f687d7b07362"
 dependencies = [
  "rc-types",
  "thiserror 1.0.69",
@@ -1022,7 +1032,7 @@ dependencies = [
 [[package]]
 name = "rc-session"
 version = "0.1.0"
-source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.14#05b7f91f35421a9dc008974ca3397ac49c6dec44"
+source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.21#147865e2c72cdd98bea5901eeb12f687d7b07362"
 dependencies = [
  "rand 0.8.8",
  "rc-capture",
@@ -1039,7 +1049,7 @@ dependencies = [
 [[package]]
 name = "rc-tools"
 version = "0.1.0"
-source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.14#05b7f91f35421a9dc008974ca3397ac49c6dec44"
+source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.21#147865e2c72cdd98bea5901eeb12f687d7b07362"
 dependencies = [
  "base64",
  "libc",
@@ -1051,7 +1061,7 @@ dependencies = [
 [[package]]
 name = "rc-trace"
 version = "0.1.0"
-source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.14#05b7f91f35421a9dc008974ca3397ac49c6dec44"
+source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.21#147865e2c72cdd98bea5901eeb12f687d7b07362"
 dependencies = [
  "rc-types",
 ]
@@ -1059,7 +1069,7 @@ dependencies = [
 [[package]]
 name = "rc-types"
 version = "0.1.0"
-source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.14#05b7f91f35421a9dc008974ca3397ac49c6dec44"
+source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.21#147865e2c72cdd98bea5901eeb12f687d7b07362"
 dependencies = [
  "thiserror 1.0.69",
 ]
@@ -1071,7 +1081,7 @@ dependencies = [
  "rc-client-core",
  "rc-platform-win",
  "rc-types",
- "windows",
+ "windows 0.37.0",
 ]
 
 [[package]]
@@ -1079,6 +1089,7 @@ name = "rc-win32core"
 version = "0.1.0"
 dependencies = [
  "rc-types",
+ "windows 0.58.0",
 ]
 
 [[package]]
@@ -1480,10 +1491,74 @@ dependencies = [
 ]
 
 [[package]]
+name = "windows"
+version = "0.58.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd04d41d93c4992d421894c18c8b43496aa748dd4c081bac0dc93eb0489272b6"
+dependencies = [
+ "windows-core",
+ "windows-targets",
+]
+
+[[package]]
+name = "windows-core"
+version = "0.58.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ba6d44ec8c2591c134257ce647b7ea6b20335bf6379a27dac5f1641fcf59f99"
+dependencies = [
+ "windows-implement",
+ "windows-interface",
+ "windows-result",
+ "windows-strings",
+ "windows-targets",
+]
+
+[[package]]
+name = "windows-implement"
+version = "0.58.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bbd5b46c938e506ecbce286b6628a02171d56153ba733b6c741fc627ec9579b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "windows-interface"
+version = "0.58.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "053c4c462dc91d3b1504c6fe5a726dd15e216ba718e84a0e46a88fbe5ded3515"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "windows-link"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
+
+[[package]]
+name = "windows-result"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d1043d8214f791817bab27572aaa8af63732e11bf84aa21a45a78d6c317ae0e"
+dependencies = [
+ "windows-targets",
+]
+
+[[package]]
+name = "windows-strings"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cd9b125c486025df0eabcb585e62173c6c9eddcec5d117d3b6e8c30e2ee4d10"
+dependencies = [
+ "windows-result",
+ "windows-targets",
+]
 
 [[package]]
 name = "windows-sys"

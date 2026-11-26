@@ -8,3 +8,4 @@ license.workspace = true
 
 [dependencies]
 rc-types.workspace = true
+windows.workspace = true

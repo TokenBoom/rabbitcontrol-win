@@ -24,10 +24,13 @@
 //!
 //! # 当前状态
 //!
-//! 骨架占位：设备创建返回未实现错误。
+//! [`probe`]（设备能力探测）已实现；[`SharedDevice`] 单例仍为骨架占位。
+//! unsafe 策略：crate 级 `deny(unsafe_code)`，FFI 边界模块定点 `allow`。
 
 #![deny(missing_docs)]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
+
+pub mod probe;
 
 /// D3D11 设备类别。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

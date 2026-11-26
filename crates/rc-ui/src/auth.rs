@@ -293,6 +293,8 @@ fn bind_device_and_ensure_cert(
                 device_key: cfg.device_key.clone(),
                 hostname: Some(hostname.clone()),
                 os: Some(os_name.clone()),
+                app_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                arch: Some(std::env::consts::ARCH.to_string()),
                 alias: None,
                 device_pubkey: Some(pubkey_hex.clone()),
                 allow_remote_assist: Some(true),

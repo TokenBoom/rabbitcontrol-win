@@ -13,4 +13,9 @@ path = "src/main.rs"
 [dependencies]
 rc-platform-win = { path = "../rc-platform-win" }
 rc-types.workspace = true
+rc-client-core.workspace = true
+rc-d3d11 = { path = "../rc-d3d11" }
+rc-capture-win = { path = "../rc-capture-win" }
+rc-encode-mf = { path = "../rc-encode-mf" }
+rc-decode-mf = { path = "../rc-decode-mf" }
 clap = { version = "4", features = ["derive"] }

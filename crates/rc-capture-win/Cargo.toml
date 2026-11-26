@@ -11,3 +11,4 @@ rc-capture.workspace = true
 rc-types.workspace = true
 rc-d3d11 = { path = "../rc-d3d11" }
 rc-win32core = { path = "../rc-win32core" }
+windows.workspace = true

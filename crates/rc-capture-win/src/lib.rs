@@ -20,9 +20,16 @@
 //! 本 crate 同时提供被控会话需要的显示原语：主屏逻辑/物理分辨率查询
 //! （每显示器 DPI 感知）、显示模式枚举与切换（[`DisplayModeGuard`] 会话
 //! 守卫，结束恢复原分辨率）、锁屏、壁纸截取。
+//!
+//! # 当前状态
+//!
+//! [`probe`]（DXGI 适配器/输出枚举探测）已实现；采集/显示控制仍为骨架。
+//! unsafe 策略：crate 级 `deny(unsafe_code)`，FFI 边界模块定点 `allow`。
 
 #![deny(missing_docs)]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
+
+pub mod probe;
 
 use std::time::Duration;
 

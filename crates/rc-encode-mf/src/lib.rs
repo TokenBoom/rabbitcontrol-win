@@ -21,10 +21,13 @@
 //!
 //! # 当前状态
 //!
-//! 骨架占位：配置校验对齐 core 契约，编码调用返回未实现错误。
+//! [`probe`]（编码 MFT 枚举）已实现；编码会话仍为骨架占位。
+//! unsafe 策略：crate 级 `deny(unsafe_code)`，FFI 边界定点 `allow`。
 
 #![deny(missing_docs)]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
+
+pub mod probe;
 
 use rc_capture::CapturedFrame;
 use rc_encode::{BitstreamFormat, Codec, EncodedFrame, Encoder, EncoderCaps, EncoderConfig};

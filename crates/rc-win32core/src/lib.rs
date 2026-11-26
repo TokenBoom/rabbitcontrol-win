@@ -4,7 +4,9 @@
 //!
 //! - **COM 套间** [`ComApartment`]：WASAPI、Media Foundation、WGC、剪贴板
 //!   监听都要求在正确初始化的 COM 套间内运行；用 RAII 守卫保证
-//!   `CoInitializeEx`/`CoUninitialize` 配对。
+//!   `CoInitializeEx`/`CoUninitialize` 配对。**已实现**。
+//! - **MF 设施** [`mf`]：`MFStartup` 守卫与视频 MFT 枚举（探测/能力上报）。
+//!   **已实现**。
 //! - **消息窗口** [`MessageWindow`]：Windows 上大量系统事件（剪贴板变更
 //!   `WM_CLIPBOARDUPDATE`、托盘回调、显示器拓扑变化 `WM_DISPLAYCHANGE`、
 //!   会话锁屏 `WTS_SESSION_LOCK`）只通过窗口消息派发。本类型提供隐藏
@@ -17,38 +19,28 @@
 //!   阻止系统休眠/关屏导致采集中断。
 //! - **主机时钟** [`host_time_us`]：基于 `QueryPerformanceCounter` 的
 //!   单调微秒时钟，采集帧时间戳与管线时钟的统一基准。
+//!
+//! # 当前状态
+//!
+//! `ComApartment` 与 [`mf`] 已实现；消息窗口/MMCSS/电源请求/QPC 时钟
+//! 仍为骨架占位。unsafe 策略：crate 级 `deny(unsafe_code)`，FFI 边界
+//! 模块（`com`/`mf`）定点 `allow` 并在模块头注明安全不变量。
 
 #![deny(missing_docs)]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
-/// COM 套间模型。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ApartmentModel {
-    /// 单线程套间（STA）。WASAPI 事件驱动回调与部分 shell API 要求。
-    SingleThreaded,
-    /// 多线程套间（MTA）。Media Foundation 与 WGC 推荐。
-    MultiThreaded,
-}
+mod com;
+pub mod mf;
 
-/// COM 套间初始化守卫，Drop 时调用 `CoUninitialize`。
+pub use com::ApartmentModel;
+pub use com::ComApartment;
+
+/// 宽字符（UTF-16）缓冲转 Rust 字符串，按首个 NUL 截断。
 ///
-/// TODO: `CoInitializeEx(None, COINIT_APARTMENTTHREADED/COINIT_MULTITHREADED)`；
-/// 已初始化（`RPC_E_CHANGED_MODE` 除外）时退化为空守卫。
-pub struct ComApartment {
-    model: ApartmentModel,
-}
-
-impl ComApartment {
-    /// 在当前线程初始化 COM 套间。
-    pub fn init(model: ApartmentModel) -> std::result::Result<Self, String> {
-        // TODO: CoInitializeEx 实现。
-        Ok(Self { model })
-    }
-
-    /// 套间模型。
-    pub fn model(&self) -> ApartmentModel {
-        self.model
-    }
+/// 供各探测/日志路径共用（DXGI/MF 描述字段都是固定长度宽字符数组）。
+pub fn wide_to_string(buffer: &[u16]) -> String {
+    let end = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
+    String::from_utf16_lossy(&buffer[..end])
 }
 
 /// 隐藏消息窗口与专用消息泵线程。

@@ -13,10 +13,13 @@
 //!
 //! # 当前状态
 //!
-//! 骨架占位：解码调用返回未实现错误。
+//! [`probe`]（解码 MFT 枚举）已实现；解码会话仍为骨架占位。
+//! unsafe 策略：crate 级 `deny(unsafe_code)`，FFI 边界定点 `allow`。
 
 #![deny(missing_docs)]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
+
+pub mod probe;
 
 use rc_decode::{DecodeOutput, Decoder};
 use rc_encode::Codec;
