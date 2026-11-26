@@ -4,6 +4,7 @@
 
 pub mod auth;
 pub mod history;
+pub mod host;
 pub mod runtime;
 pub mod session;
 pub mod settings;

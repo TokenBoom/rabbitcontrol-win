@@ -65,6 +65,9 @@ pub(crate) enum Action {
     PortmapRule(u64, u8),
     PromptOk,
     PromptCancel,
+    HostToggle(bool),
+    HostApprove,
+    HostReject,
 }
 
 pub(crate) enum Event {
@@ -78,6 +81,7 @@ pub(crate) enum Event {
     SessionLaunched(Box<SessionLaunchOutcome>, String, String),
     SessionPointer(SessionPointerEvent),
     SessionKey(SessionKeyEvent),
+    HostStarted(std::result::Result<rc_client_core::host_bridge::HostHandle, String>),
 }
 
 /// 会话启动结果（Box 降低 Event 枚举整体尺寸）。

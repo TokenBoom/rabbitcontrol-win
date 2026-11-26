@@ -102,6 +102,12 @@ pub struct App {
     portmaps: Vec<rc_tools::portmap::PortMapRuleSnapshot>,
     /// 提示浮层待办（0 无 / 1 下载路径）。
     prompt_pending: u8,
+    /// M5 被控端运行时。
+    host_rt: crate::biz::host::HostRuntime,
+    /// 在途审批代次（None = 无弹窗）。
+    approval_generation: Option<u64>,
+    /// 被控会话起始 tick（Banner 计时）。
+    host_session_start_tick: u64,
     peer_watch_only: bool,
     pressed_keys: Vec<u16>,
     pressed_buttons: Vec<u8>,
@@ -173,6 +179,9 @@ impl App {
             transfers_dirty: false,
             portmaps: Vec::new(),
             prompt_pending: 0,
+            host_rt: crate::biz::host::HostRuntime::new(),
+            approval_generation: None,
+            host_session_start_tick: 0,
             peer_watch_only: false,
             pressed_keys: Vec::new(),
             pressed_buttons: Vec::new(),
@@ -305,6 +314,9 @@ impl App {
         self.switch_toggled("HudToggle", Action::HudToggled(true))?;
         self.switch_toggled("EncryptToggle", Action::EncryptToggled(true))?;
         self.switch_toggled("LockOnExitToggle", Action::LockOnExitToggled(true))?;
+        self.switch_toggled("HostSwitch", Action::HostToggle(true))?;
+        self.click("HostApprove", Action::HostApprove)?;
+        self.click("HostReject", Action::HostReject)?;
         self.click("ProbeServer", Action::ProbeServer)?;
         self.click("BannerDisconnect", Action::BannerDisconnect)?;
         Ok(())
@@ -779,13 +791,146 @@ impl App {
                 }
                 Event::SessionPointer(pointer) => self.on_session_pointer(pointer)?,
                 Event::SessionKey(key) => self.on_session_key(key)?,
+                Event::HostStarted(result) => {
+                    self.set_busy(false)?;
+                    match result {
+                        Ok(handle) => {
+                            self.host_rt.handle = Some(handle);
+                            self.label("HostError", "")?;
+                        }
+                        Err(err) => {
+                            let _ = self.set_checked_named("HostSwitch", false);
+                            self.label("HostError", &format!("启动失败：{err}"))?;
+                        }
+                    }
+                }
             }
         }
         self.on_tick()?;
         Ok(())
     }
 
+    /// M5：被控事件归纳 → UI（码/审批/横幅计时）。
+    fn poll_host(&mut self) -> Result<()> {
+        let updates = self.host_rt.poll();
+        for update in updates {
+            match update {
+                rc_client_core::host_bridge::HostUpdate::Listening { .. } => {
+                    let code = self.host_rt.temp_code.clone();
+                    let _ = self.label(
+                        "HostCode",
+                        if code.is_empty() {
+                            "——— ———"
+                        } else {
+                            &code
+                        },
+                    );
+                    let _ = self.set_visible("HostCodeBadge", !code.is_empty());
+                }
+                rc_client_core::host_bridge::HostUpdate::ApprovalRequested(prompt) => {
+                    self.approval_generation = Some(prompt.generation);
+                    let _ = self.label(
+                        "ApprovalPeer",
+                        &format!(
+                            "设备 {}（{}）请求连接本机",
+                            prompt.remote_addr, prompt.remote_addr
+                        ),
+                    );
+                    let pw = if prompt.password_verified {
+                        "密码已验证"
+                    } else {
+                        "未验证密码"
+                    };
+                    let _ = self.label(
+                        "ApprovalDetail",
+                        &format!(
+                            "分辨率 {} @ {} fps · {} · 代次 {}，超时自动拒绝",
+                            prompt.requested_res, prompt.requested_fps, pw, prompt.generation
+                        ),
+                    );
+                    self.set_visible("HostApprovalOverlay", true)?;
+                }
+                rc_client_core::host_bridge::HostUpdate::ApprovalCancelled { .. } => {
+                    self.approval_generation = None;
+                    self.set_visible("HostApprovalOverlay", false)?;
+                }
+                rc_client_core::host_bridge::HostUpdate::ClientConnected { remote_addr } => {
+                    self.approval_generation = None;
+                    self.set_visible("HostApprovalOverlay", false)?;
+                    self.host_session_start_tick = self.tick;
+                    self.host_rt.connected_peer = Some(remote_addr);
+                    self.set_visible("HostBanner", true)?;
+                }
+                rc_client_core::host_bridge::HostUpdate::OwnerConnected { remote_addr, .. } => {
+                    self.approval_generation = None;
+                    self.set_visible("HostApprovalOverlay", false)?;
+                    self.host_session_start_tick = self.tick;
+                    self.host_rt.connected_peer = Some(remote_addr);
+                    self.set_visible("HostBanner", true)?;
+                }
+                rc_client_core::host_bridge::HostUpdate::ClientDisconnected { .. } => {
+                    self.set_visible("HostBanner", false)?;
+                }
+                rc_client_core::host_bridge::HostUpdate::Stopped => {
+                    self.set_visible("HostBanner", false)?;
+                    self.set_visible("HostCodeBadge", false)?;
+                }
+                _ => {}
+            }
+        }
+        // 横幅计时（每 ~1s 刷新一次）
+        if self.host_rt.session_active && self.tick % 20 == 0 {
+            let secs = (self.tick - self.host_session_start_tick) * 50 / 1000;
+            let _ = self.label(
+                "BannerTimer",
+                &format!(
+                    "{:02}:{:02}:{:02}",
+                    secs / 3600,
+                    (secs % 3600) / 60,
+                    secs % 60
+                ),
+            );
+        }
+        Ok(())
+    }
+
+    /// M5：被控开关（后台线程启动，避免阻塞 UI）。
+    fn on_host_toggle(&mut self, on: bool) -> Result<()> {
+        if !on {
+            self.host_rt.stop();
+            self.set_visible("HostCodeBadge", false)?;
+            self.set_visible("HostBanner", false)?;
+            self.label("HostError", "")?;
+            return Ok(());
+        }
+        let password = self
+            .find_opt::<windows::UI::Xaml::Controls::PasswordBox>("HostPassword")
+            .and_then(|b| b.Password().ok())
+            .map(|s| s.to_string())
+            .filter(|p| !p.is_empty());
+        let manager = self.auth.manager();
+        let events = self.sender();
+        self.set_busy(true)?;
+        thread::spawn(move || {
+            let result = crate::biz::host::HostRuntime::start(&manager, password);
+            events.send(Event::HostStarted(result));
+        });
+        Ok(())
+    }
+
+    /// M5：审批应答（过期代次静默丢弃）。
+    fn on_host_approval(&mut self, accepted: bool) -> Result<()> {
+        if let Some(generation) = self.approval_generation.take() {
+            if let Some(handle) = self.host_rt.handle.as_ref() {
+                let _ = handle.respond_approval(generation, accepted);
+            }
+        }
+        self.set_visible("HostApprovalOverlay", false)
+    }
+
     fn on_tick(&mut self) -> Result<()> {
+        // M5：被控端事件泵
+        self.poll_host()?;
         // M3.6：会话窗口关闭确认 → 释放输入 + 断开 + 销毁窗口
         if crate::ui::session_window::take_close_request() {
             self.release_pressed_input();
@@ -1083,6 +1228,9 @@ impl App {
             Action::PortmapAdd => self.on_portmap_add(),
             Action::PortmapRule(id, op) => self.on_portmap_rule(id, op),
             Action::PromptOk => self.on_prompt_ok(),
+            Action::HostToggle(on) => self.on_host_toggle(on),
+            Action::HostApprove => self.on_host_approval(true),
+            Action::HostReject => self.on_host_approval(false),
             Action::PromptCancel => self.on_prompt_cancel(),
             Action::SessionFullscreen => {
                 if let Some(host) = self.session_host.as_ref() {
