@@ -884,6 +884,9 @@ version = "0.1.0"
 dependencies = [
  "rc-platform-win",
  "rc-types",
+ "serde",
+ "serde_json",
+ "windows 0.58.0",
 ]
 
 [[package]]
