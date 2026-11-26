@@ -51,6 +51,7 @@ pub(crate) enum Action {
     SessionReconnect,
     SessionQualityToggle,
     StreamQualityChanged,
+    MouseModeChanged,
 }
 
 pub(crate) enum Event {

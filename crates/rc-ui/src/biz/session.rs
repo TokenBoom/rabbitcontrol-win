@@ -188,7 +188,16 @@ pub struct QualityState {
     pub supported_codecs: Vec<String>,
     /// 控制端硬件解码路径是否支持 HEVC。
     pub client_supports_hevc: bool,
+    /// 当前生效鼠标模式（`"smart"` / `"remote"` / `"local"`；未上报时 `None`）。
+    pub mouse_mode: Option<String>,
 }
+
+/// 鼠标模式候选（固定顺序，与下拉框索引一一对应）。
+pub const MOUSE_MODES: [(&str, &str); 3] = [
+    ("smart", "智能跟踪"),
+    ("remote", "远程光标"),
+    ("local", "本地光标"),
+];
 
 /// 预钳制流参数请求（ios 踩坑：越界请求被控端静默无流）。
 ///

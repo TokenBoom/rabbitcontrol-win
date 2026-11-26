@@ -163,10 +163,16 @@ impl App {
             .find_opt::<PasswordBox>("PeerPasswordBox")
             .map(|box_| box_.Password().unwrap_or_default().to_string())
             .filter(|p| !p.is_empty());
-        // 0.37 投影 CheckBox.IsChecked 需 UIA；M2 以勾选框视觉状态不可读，
-        // 仅观看入口保留在 UI，后续经 GetTogglePattern 化（先读 IReference）。
-        // M2：仅观看勾选框的视觉态读取在 M3 完善（0.37 无直接投影）。
-        let watch_only = false;
+        // M3.3：仅观看勾选框读取（ToggleButton.IsChecked → IReference<bool>）
+        let watch_only = self
+            .find_opt::<windows::UI::Xaml::Controls::CheckBox>("WatchOnlyCheck")
+            .and_then(|c| {
+                c.cast::<windows::UI::Xaml::Controls::Primitives::ToggleButton>()
+                    .ok()
+            })
+            .and_then(|t| t.IsChecked().ok())
+            .and_then(|v| v.Value().ok())
+            .unwrap_or(false);
         self.peer_watch_only = watch_only;
         let preset = self.prefs.lock().unwrap().bitrate_preset.clone();
         let params = sess::ConnectParams {
@@ -489,6 +495,33 @@ impl App {
                 };
                 handle.send(rc_client_core::session_bridge::SessionCommand::SetCodec { codec });
             }
+        }
+        Ok(())
+    }
+
+    /// 鼠标模式变更：与当前生效一致时跳过（防程序化回填空下发）。
+    pub(crate) fn on_mouse_mode_changed(&mut self) -> Result<()> {
+        use windows::UI::Xaml::Controls::{ComboBox, Primitives};
+        if !matches!(self.session_view, SessionView::Negotiated { .. }) {
+            return Ok(());
+        }
+        let index = self
+            .find_opt::<ComboBox>("StreamMouseBox")
+            .and_then(|b| b.cast::<Primitives::Selector>().ok())
+            .and_then(|s| s.SelectedIndex().ok())
+            .unwrap_or(0);
+        let Some((mode, _)) = sess::MOUSE_MODES.get(index.max(0) as usize) else {
+            return Ok(());
+        };
+        if self.quality.mouse_mode.as_deref() == Some(mode) {
+            return Ok(());
+        }
+        if let Some(active) = self.session.as_ref() {
+            active.handle.send_display_ctrl(
+                rc_client_core::display_ctrl::DisplayControlMsg::SetMouseMode {
+                    mode: (*mode).to_string(),
+                },
+            );
         }
         Ok(())
     }

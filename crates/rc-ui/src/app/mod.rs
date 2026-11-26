@@ -707,8 +707,15 @@ impl App {
                     codec: codec.clone(),
                     supported_codecs: supported_codecs.clone(),
                     client_supports_hevc: *client_supports_hevc,
+                    // DisplayConfig 不携带鼠标模式，保留现值
+                    mouse_mode: self.quality.mouse_mode.clone(),
                 };
                 self.quality_fps_options = sess::fps_candidates(*max_fps);
+                self.sync_quality_bar()?;
+            }
+            // M3.3：鼠标模式回传 → 工具条选中态
+            if let SessionUpdate::MouseModeState { mode } = &update {
+                self.quality.mouse_mode = Some(mode.clone());
                 self.sync_quality_bar()?;
             }
             if matches!(update, SessionUpdate::Ended { .. }) {
@@ -884,6 +891,10 @@ impl App {
             }
             Action::StreamQualityChanged => {
                 self.on_quality_changed()?;
+                Ok(())
+            }
+            Action::MouseModeChanged => {
+                self.on_mouse_mode_changed()?;
                 Ok(())
             }
             Action::DeviceToggleFav(device_id) => {
