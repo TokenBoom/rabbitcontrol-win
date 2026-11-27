@@ -86,9 +86,11 @@
             <RowDefinition Height="Auto"/>
           </Grid.RowDefinitions>
           <ScrollViewer x:Name="TerminalScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <TextBox x:Name="TerminalOutput" IsReadOnly="True" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12"
-                     Foreground="#C9D8E8" Background="#0D1620" BorderThickness="0" IsHitTestVisible="False"
-                     MinHeight="360"/>
+            <!-- RichTextBlock 没有 Background：底色与内边距由外层 Border 承载 -->
+            <Border Background="#0D1620" CornerRadius="6" Padding="8,6" MinHeight="360">
+              <RichTextBlock x:Name="TerminalOutput" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"
+                             Foreground="#C9D8E8" IsHitTestVisible="False"/>
+            </Border>
           </ScrollViewer>
           <Grid Grid.Row="1" Margin="0,8,0,0">
             <Grid.ColumnDefinitions>

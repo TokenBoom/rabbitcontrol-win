@@ -11,9 +11,6 @@ use rc_tools::portmap::PortMapStatus;
 use windows::core::{Interface, Result, HSTRING};
 use windows::UI::Xaml::Controls::{StackPanel, TextBox};
 
-/// 终端输出缓冲上限（字节）——超出丢弃头部，防长会话撑爆内存。
-const TERMINAL_BUFFER_CAP: usize = 256 * 1024;
-
 impl App {
     /// 工具面板显隐切换。
     pub(crate) fn on_tool_toggle(&mut self) -> Result<()> {
@@ -52,11 +49,12 @@ impl App {
             return Ok(());
         };
         self.label("TerminalHint", "正在打开终端…")?;
-        match active
-            .handle
-            .tools()
-            .terminal_open_with_options(120, 30, None, true)
-        {
+        match active.handle.tools().terminal_open_with_options(
+            super::terminal_view::TERMINAL_COLS,
+            super::terminal_view::TERMINAL_ROWS,
+            None,
+            true,
+        ) {
             Ok(_term_id) => Ok(()),
             Err(err) => self.label("TerminalHint", &format!("打开失败：{err}")),
         }
@@ -101,19 +99,9 @@ impl App {
         for ev in events {
             use rc_tools::terminal::TerminalEvent;
             match ev {
-                TerminalEvent::Output {
-                    text_utf8_lossy, ..
-                } => {
-                    self.terminal_text.push_str(&text_utf8_lossy);
-                    if self.terminal_text.len() > TERMINAL_BUFFER_CAP {
-                        let cut = self.terminal_text.len() - TERMINAL_BUFFER_CAP;
-                        // 对齐 UTF-8 边界
-                        let cut = (0..=4)
-                            .find(|i| self.terminal_text.is_char_boundary(cut + i))
-                            .map(|i| cut + i)
-                            .unwrap_or(cut);
-                        self.terminal_text.drain(..cut);
-                    }
+                TerminalEvent::Output { bytes, .. } => {
+                    // 原始字节交给 VT 屏幕模型（跨块的 UTF-8 / 转义序列在模型内拼接）
+                    self.terminal.feed_bytes(&bytes);
                     self.terminal_dirty = true;
                 }
                 TerminalEvent::Opened {
@@ -121,7 +109,7 @@ impl App {
                 } => {
                     if ok {
                         self.terminal_id = Some(term_id);
-                        self.terminal_text.clear();
+                        self.terminal.full_reset();
                         self.terminal_dirty = true;
                         let _ = self.label("TerminalHint", &format!("终端 #{term_id} 已就绪"));
                     } else {
@@ -146,8 +134,8 @@ impl App {
                 }
                 TerminalEvent::Exited { term_id, .. } if self.terminal_id == Some(term_id) => {
                     self.terminal_id = None;
-                    self.terminal_text
-                        .push_str(&format!("\r\n[终端 #{term_id} 已退出]\r\n"));
+                    self.terminal
+                        .feed(&format!("\r\n[终端 #{term_id} 已退出]\r\n"));
                     self.terminal_dirty = true;
                     let _ = self.label("TerminalHint", "终端已退出，可点击「新终端」重开");
                 }
@@ -481,7 +469,7 @@ impl App {
     pub(crate) fn finish_tools_render(&mut self) -> Result<()> {
         if self.terminal_dirty {
             self.terminal_dirty = false;
-            let _ = self.label("TerminalOutput", &self.terminal_text);
+            self.render_terminal()?;
             if let Some(scroll) =
                 self.find_opt::<windows::UI::Xaml::Controls::ScrollViewer>("TerminalScroll")
             {
@@ -501,7 +489,7 @@ impl App {
 
     /// 会话结束清理（清空终端/传输状态）。
     pub(crate) fn reset_tools_state(&mut self) {
-        self.terminal_text.clear();
+        self.terminal.full_reset();
         self.terminal_id = None;
         self.transfers.clear();
         self.terminal_dirty = true;

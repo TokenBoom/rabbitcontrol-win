@@ -6,6 +6,7 @@ pub mod favorites;
 pub mod login;
 pub mod session_view;
 pub mod settings_page;
+pub mod terminal_view;
 pub mod tools;
 
 use windows::UI::Xaml::Controls::Primitives::ToggleButton;

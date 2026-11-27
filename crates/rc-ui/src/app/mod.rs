@@ -92,7 +92,8 @@ pub struct App {
     /// M4 工具面板状态。
     tool_panel_visible: bool,
     tool_tab: u8,
-    terminal_text: String,
+    terminal: crate::biz::vt::VtScreen,
+    terminal_brushes: std::collections::HashMap<u32, windows::UI::Xaml::Media::SolidColorBrush>,
     terminal_id: Option<u32>,
     terminal_dirty: bool,
     transfers: Vec<rc_tools::file_transfer::TransferItem>,
@@ -172,7 +173,11 @@ impl App {
             fullscreen: false,
             tool_panel_visible: false,
             tool_tab: 0,
-            terminal_text: String::new(),
+            terminal: crate::biz::vt::VtScreen::new(
+                usize::from(pages::terminal_view::TERMINAL_COLS),
+                usize::from(pages::terminal_view::TERMINAL_ROWS),
+            ),
+            terminal_brushes: std::collections::HashMap::new(),
             terminal_id: None,
             terminal_dirty: false,
             transfers: Vec::new(),
