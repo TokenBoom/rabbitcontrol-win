@@ -113,16 +113,25 @@ impl MfDecoder {
                 .map_err(|e| Error::InvalidConfig(format!("SetInputType：{e:?}")))?;
         }
 
-        // 输出类型：NV12
-        let out_type: IMFMediaType = unsafe { MFCreateMediaType() }
-            .map_err(|e| Error::InvalidConfig(format!("创建输出类型失败：{e:?}")))?;
+        // 输出类型：枚举 GetOutputAvailableType 找 NV12（硬件解码 MFT 只接受
+        // 其自报的可用类型，盲设新类型返回 0xC00D36E6 属性未找到）
+        let mut out_type: Option<IMFMediaType> = None;
+        for index in 0..16u32 {
+            match unsafe { transform.GetOutputAvailableType(0, index) } {
+                Ok(available) => {
+                    if let Ok(subtype) = unsafe { available.GetGUID(&MF_MT_SUBTYPE) } {
+                        if subtype == MFVideoFormat_NV12 {
+                            out_type = Some(available);
+                            break;
+                        }
+                    }
+                }
+                Err(_) => break, // 枚举结束
+            }
+        }
+        let out_type =
+            out_type.ok_or_else(|| Error::InvalidConfig("解码器未提供 NV12 输出类型".into()))?;
         unsafe {
-            out_type
-                .SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)
-                .map_err(|e| Error::InvalidConfig(format!("out major：{e:?}")))?;
-            out_type
-                .SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_NV12)
-                .map_err(|e| Error::InvalidConfig(format!("out subtype：{e:?}")))?;
             transform
                 .SetOutputType(0, &out_type, 0)
                 .map_err(|e| Error::InvalidConfig(format!("SetOutputType：{e:?}")))?;
