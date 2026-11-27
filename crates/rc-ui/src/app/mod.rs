@@ -196,6 +196,11 @@ impl App {
         })?;
         eprintln!("[App::new] wire OK");
         app.apply_brand();
+        // 登录浮层覆盖全窗：隐藏标题栏文字/图标（沉浸式）
+        let _ = app.set_visible("AppTitle", false);
+        let _ = app.set_visible("TitleLogo", false);
+        let _ = app.set_visible("Minimize", false);
+        let _ = app.set_visible("CloseWindow", false);
         crate::ui::session_window::set_main_hwnd(shell.hwnd());
         {
             let events = app.sender();

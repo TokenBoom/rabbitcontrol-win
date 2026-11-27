@@ -499,7 +499,7 @@
   </Grid>
 
   <!-- ===== 登录浮层（覆盖内容区；标题栏保持可见） ===== -->
-  <Grid x:Name="LoginOverlay" Grid.Row="1" Visibility="Visible">
+  <Grid x:Name="LoginOverlay" Grid.Row="0" Grid.RowSpan="2" Visibility="Visible">
     <Grid.Background>
       <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
         <GradientStop Color="#EAF4FF" Offset="0"/>

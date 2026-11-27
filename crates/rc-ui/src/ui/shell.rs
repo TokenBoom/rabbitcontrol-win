@@ -152,7 +152,22 @@ struct DragState {
 // 使用指针捕获与屏幕坐标直移替代系统模态移动循环，避免与 XAML Island 消息泵冲突导致卡顿或失效。
 fn attach_caption(root: &FrameworkElement, hwnd: HWND) -> Result<()> {
     // 登录浮层覆盖标题栏时，顶部 40px 拖动条接管拖动。
-    bind_drag_region(root, "DragRegion", hwnd)?;
+    for name in ["DragRegion", "LoginDragRegion"] {
+        bind_drag_region(root, name, hwnd)?;
+    }
+    // 登录态沉浸式按钮（与标题栏共用系统命令）
+    for (name, command) in [("LoginMinimize", SC_MINIMIZE), ("LoginClose", SC_CLOSE)] {
+        let button: ButtonBase = match root.FindName(name) {
+            Ok(b) => b.cast()?,
+            Err(_) => continue, // 登录后元素仍在（浮层隐藏），找不到才算异常
+        };
+        button.Click(windows::UI::Xaml::RoutedEventHandler::new(move |_, _| {
+            unsafe {
+                PostMessageW(hwnd, WM_SYSCOMMAND, WPARAM(command as usize), None);
+            }
+            Ok(())
+        }))?;
+    }
 
     for (name, command) in [("Minimize", SC_MINIMIZE), ("CloseWindow", SC_CLOSE)] {
         let button: ButtonBase = root.FindName(name)?.cast()?;

@@ -66,6 +66,11 @@ impl App {
     }
 
     pub(crate) fn open_main(&mut self, account: &AccountSession) -> Result<()> {
+        // 登录成功：恢复标题栏元素（登录浮层隐藏后标题栏可见）
+        let _ = self.set_visible("AppTitle", true);
+        let _ = self.set_visible("TitleLogo", true);
+        let _ = self.set_visible("Minimize", true);
+        let _ = self.set_visible("CloseWindow", true);
         self.find::<PasswordBox>("Password")?.SetPassword("")?;
         self.label("LoginError", "")?;
         self.label("AccountEmail", &account.email)?;
