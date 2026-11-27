@@ -332,6 +332,9 @@ pub fn install() -> Result<(), String> {
         );
         let _ = CloseServiceHandle(service);
     }
+    if let Err(err) = crate::firewall::register() {
+        eprintln!("[rc-daemon] 防火墙规则注册失败：{err}");
+    }
     Ok(())
 }
 
@@ -398,6 +401,9 @@ pub fn control(start: bool) -> Result<(), String> {
 pub fn setup() -> Result<(), String> {
     install()?;
     control(true)?;
+    if let Err(err) = crate::firewall::register() {
+        eprintln!("[rc-daemon] 防火墙规则注册失败：{err}");
+    }
     // 就绪探测：管道可达即成功（最长 ~5s）
     for _ in 0..10 {
         if crate::pipe::call(r#"{"op":"ping"}"#).is_ok() {

@@ -24,6 +24,7 @@
 //! rc-daemon ping           # 管道探测（服务在跑才可达）
 //! ```
 
+mod firewall;
 mod pipe;
 mod protocol;
 mod service;
