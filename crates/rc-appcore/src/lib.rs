@@ -1,0 +1,21 @@
+//! RabbitControl Windows 跨进程共享的应用层逻辑（GUI-free）。
+//!
+//! 主界面（`rc-ui`）与后台被控进程（`rc-host-win` 的 `rc-host-agent`）共用：
+//!
+//! - [`auth_text`]：认证错误文案、本机标识；
+//! - [`signal_runtime`]：信令长连接与局域网发现的生命周期（同一设备同一时刻
+//!   只能有一条信令连接——服务端会以新连接顶掉旧连接）；
+//! - [`host`]：被控服务（[`rc_client_core::host_bridge::HostHandle`]）编排；
+//! - [`agent_state`]：后台被控进程的持久化开关；
+//! - [`agent_ipc`]：主界面 ↔ 后台被控进程的命名管道协议。
+//!
+//! 本 crate 不引用任何 UI 框架；可单测。
+
+#![deny(missing_docs)]
+#![deny(unsafe_code)]
+
+pub mod agent_ipc;
+pub mod agent_state;
+pub mod auth_text;
+pub mod host;
+pub mod signal_runtime;

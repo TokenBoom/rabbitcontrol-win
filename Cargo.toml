@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/rc-appcore",
     "crates/rc-win32core",
     "crates/rc-d3d11",
     "crates/rc-capture-win",

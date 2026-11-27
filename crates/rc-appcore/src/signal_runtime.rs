@@ -1,5 +1,8 @@
 //! 信令运行时：登录后拉起/重建信令长连接，代计数器防异步竞态。
 //!
+//! 主界面与后台被控进程共用同一份实现：同一设备同一时刻只能有一条信令
+//! 连接（服务端以新连接顶掉旧连接），所以两个进程必须让位 / 接管，而不是各连一条。
+//!
 //! 语义对齐 iOS `RuntimeService`：`sync` 收口「停旧 → 重建」，每次调用
 //! 递增代计数器；后台结果落地前必须校验代数一致，避免旧信令的事件
 //! 窜入新会话。GUI-free：不引用任何 windows 类型，可单测。
@@ -16,7 +19,7 @@ use rc_client_core::signal_client::{
     TokenProvider, TokenRefresher,
 };
 
-use crate::biz::auth;
+use crate::auth_text;
 
 /// 单次 `poll` 排空得到的事件集合。
 #[derive(Debug, Default)]
@@ -76,13 +79,13 @@ impl SignalRuntime {
         let token_provider: TokenProvider = Arc::new(move || {
             manager
                 .ensure_valid_access_token()
-                .map_err(auth::format_auth_error)
+                .map_err(auth_text::format_auth_error)
         });
         let manager_refresh = Arc::clone(&self.manager);
         let token_refresher: TokenRefresher = Arc::new(move |stale| {
             manager_refresh
                 .refresh_after_unauthorized(stale)
-                .map_err(auth::format_auth_error)
+                .map_err(auth_text::format_auth_error)
         });
         let device_pubkey = Some(self.manager.cert_manager().device_pubkey_hex());
 
@@ -94,7 +97,7 @@ impl SignalRuntime {
 
         let signal = SignalClientHandle::spawn_with_options(
             cfg,
-            auth::local_hostname(),
+            auth_text::local_hostname(),
             Vec::new(),
             SignalClientOptions {
                 token_provider: Some(token_provider),
@@ -121,7 +124,7 @@ impl SignalRuntime {
                 .unwrap_or(0);
             inner.lan = Some(LanDiscoveryHandle::spawn(
                 instance_id,
-                auth::local_hostname(),
+                auth_text::local_hostname(),
             ));
         }
         Ok(generation)
@@ -210,9 +213,9 @@ impl SignalRuntime {
         };
         let ack = signal
             .request_wol(target_id, timeout)
-            .map_err(|e| super::ui_error_text(&e))?;
+            .map_err(|e| auth_text::ui_error_text(&e))?;
         if !ack.ok {
-            let from_catalog = ack.ui_error.as_ref().map(super::ui_error_text);
+            let from_catalog = ack.ui_error.as_ref().map(auth_text::ui_error_text);
             let from_server = (!ack.message.trim().is_empty()).then(|| ack.message.clone());
             return Err(from_catalog
                 .or(from_server)

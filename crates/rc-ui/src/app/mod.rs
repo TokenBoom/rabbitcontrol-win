@@ -102,7 +102,7 @@ pub struct App {
     /// 提示浮层待办（0 无 / 1 下载路径）。
     prompt_pending: u8,
     /// M5 被控端运行时。
-    host_rt: crate::biz::host::HostRuntime,
+    host_rt: rc_appcore::host::HostRuntime,
     /// 「允许文件互传」开关的期望值：启动被控服务时生效，运行中可热切换。
     allow_file_transfer: bool,
     /// 在途审批代次（None = 无弹窗）。
@@ -123,10 +123,11 @@ mod pages;
 pub(crate) use actions::{Action, Event, Events, Page};
 use actions::{SessionKeyEvent, SessionPointerEvent};
 
+use rc_appcore::signal_runtime::SignalRuntime;
+
 use crate::biz::{
     auth::{self, AuthRuntime},
     history::{self, TargetHistory},
-    runtime::SignalRuntime,
     session::{self as sess, SessionView},
     settings,
 };
@@ -189,7 +190,7 @@ impl App {
             transfers_dirty: false,
             portmaps: Vec::new(),
             prompt_pending: 0,
-            host_rt: crate::biz::host::HostRuntime::new(),
+            host_rt: rc_appcore::host::HostRuntime::new(),
             allow_file_transfer,
             approval_generation: None,
             host_session_start_tick: 0,
@@ -997,7 +998,7 @@ impl App {
         self.set_busy(true)?;
         thread::spawn(move || {
             let result =
-                crate::biz::host::HostRuntime::start(&manager, password, allow_file_transfer);
+                rc_appcore::host::HostRuntime::start(&manager, password, allow_file_transfer);
             events.send(Event::HostStarted(result));
         });
         Ok(())
@@ -1037,7 +1038,7 @@ impl App {
         let events = self.runtime.poll();
         // M5：信令入站中继桥接（被控开关未开 → 快速拒绝）
         for incoming in events.host_incoming {
-            crate::biz::host::bridge_relay_incoming(
+            rc_appcore::host::bridge_relay_incoming(
                 self.host_rt.handle.as_ref(),
                 incoming,
                 &self.auth.manager(),
@@ -1238,7 +1239,8 @@ impl App {
                 let events = self.sender();
                 let target = target.clone();
                 thread::spawn(move || {
-                    let result = runtime.request_wol(&target, crate::biz::runtime::WOL_TIMEOUT);
+                    let result =
+                        runtime.request_wol(&target, rc_appcore::signal_runtime::WOL_TIMEOUT);
                     events.send(Event::WolFinished(target, result));
                 });
                 Ok(())

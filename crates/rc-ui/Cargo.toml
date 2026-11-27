@@ -16,6 +16,7 @@ path = "src/main.rs"
 embed-resource = "2.5"
 
 [dependencies]
+rc-appcore = { path = "../rc-appcore" }
 rc-platform-win = { path = "../rc-platform-win" }
 rc-d3d11 = { path = "../rc-d3d11" }
 rc-client-core.workspace = true

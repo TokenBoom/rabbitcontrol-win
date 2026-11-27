@@ -17,17 +17,21 @@ use rc_session::auth::DEFAULT_AUTH_TIMEOUT_US;
 pub const DEFAULT_HOST_LISTEN: SocketAddr =
     SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 44350);
 
-/// 被控运行时状态（App 持有；handle 可为 None = 未启用）。
+/// 被控运行时状态（持有方为 `None` 时表示未启用）。
+#[derive(Default)]
 pub struct HostRuntime {
+    /// 被控服务句柄（未启用时为 `None`）。
     pub handle: Option<HostHandle>,
     /// 临时码（Listening 后上报）。
     pub temp_code: String,
     /// 被控会话进行中（Banner 计时展示）。
     pub session_active: bool,
+    /// 正在控制本机的远端描述。
     pub connected_peer: Option<String>,
 }
 
 impl HostRuntime {
+    /// 未启用状态下的被控运行时。
     pub fn new() -> Self {
         Self {
             handle: None,
