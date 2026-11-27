@@ -498,16 +498,14 @@
     </Grid>
   </Grid>
 
-  <!-- ===== 登录浮层（未登录时覆盖全窗口，含标题栏区域） ===== -->
-  <Grid x:Name="LoginOverlay" Grid.Row="0" Grid.RowSpan="2" Visibility="Visible">
+  <!-- ===== 登录浮层（覆盖内容区；标题栏保持可见） ===== -->
+  <Grid x:Name="LoginOverlay" Grid.Row="1" Visibility="Visible">
     <Grid.Background>
       <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
         <GradientStop Color="#EAF4FF" Offset="0"/>
         <GradientStop Color="#F5F0FF" Offset="1"/>
       </LinearGradientBrush>
     </Grid.Background>
-    <!-- 登录态无标题栏：顶部留一条可拖动区 -->
-    <Border x:Name="LoginDragRegion" Height="40" VerticalAlignment="Top" Background="Transparent"/>
     <!-- 登录视图：定宽居中（窗口恒 1000×660 逻辑尺寸，内容必容纳，无需滚动） -->
     <StackPanel x:Name="LoginView" Width="360" HorizontalAlignment="Center" VerticalAlignment="Center">
       <!-- 品牌 logo 区域 -->
@@ -517,7 +515,7 @@
         <TextBlock Text="远程桌面 · 账号登录" HorizontalAlignment="Center" Foreground="{ThemeResource TextTertiaryBrush}" FontSize="13" Margin="0,6,0,0"/>
       </StackPanel>
       <!-- 表单卡片 -->
-      <Border Background="White" CornerRadius="14" Padding="20,22" BorderBrush="#E8E8F0" BorderThickness="1">
+      <Border Background="White" CornerRadius="14" Padding="20,22" BorderBrush="#E8E8F0" BorderThickness="1" Width="360" HorizontalAlignment="Center">
         <StackPanel Spacing="0">
           <TextBlock Text="账号邮箱" Style="{StaticResource FieldLabel}"/>
           <TextBox x:Name="Email" AutomationProperties.Name="账号邮箱" PlaceholderText="请输入邮箱地址"

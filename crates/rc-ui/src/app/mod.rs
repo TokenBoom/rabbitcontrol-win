@@ -24,7 +24,6 @@ use windows::{
         FrameworkElement,
         Input::KeyEventHandler,
         Markup::XamlReader,
-        Media::{ScaleTransform, Transform, TransformGroup},
         RoutedEventHandler, UIElement, Visibility,
     },
 };
@@ -1486,23 +1485,10 @@ impl App {
         }
     }
 
+    /// DPI 缩放由 XAML Islands 框架原生处理（Island 按系统 DPI 比例渲染 DIP），
+    /// 不需要 RenderTransform 双重缩放（双重缩放导致内容溢出 + 偏移）。
     fn apply_scale(&mut self) -> Result<()> {
-        let dpi = unsafe { GetDpiForWindow(self.hwnd) };
-        self.last_dpi = dpi;
-        let fit = work_area_fit(self.hwnd);
-        let scale = dpi as f64 / 96.0 * fit;
-        let Some(grid) = self.find_opt::<windows::UI::Xaml::Controls::Grid>("RootLayout") else {
-            return Ok(());
-        };
-        let scale_transform = ScaleTransform::new()?;
-        scale_transform.SetScaleX(scale)?;
-        scale_transform.SetScaleY(scale)?;
-        let group = TransformGroup::new()?;
-        let as_transform: Transform = scale_transform.cast()?;
-        group.Children()?.Append(&as_transform)?;
-        let as_group_transform: Transform = group.cast()?;
-        let as_element: UIElement = grid.cast()?;
-        as_element.SetRenderTransform(&as_group_transform)?;
+        self.last_dpi = unsafe { GetDpiForWindow(self.hwnd) };
         Ok(())
     }
 }

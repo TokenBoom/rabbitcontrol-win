@@ -152,9 +152,7 @@ struct DragState {
 // 使用指针捕获与屏幕坐标直移替代系统模态移动循环，避免与 XAML Island 消息泵冲突导致卡顿或失效。
 fn attach_caption(root: &FrameworkElement, hwnd: HWND) -> Result<()> {
     // 登录浮层覆盖标题栏时，顶部 40px 拖动条接管拖动。
-    for name in ["DragRegion", "LoginDragRegion"] {
-        bind_drag_region(root, name, hwnd)?;
-    }
+    bind_drag_region(root, "DragRegion", hwnd)?;
 
     for (name, command) in [("Minimize", SC_MINIMIZE), ("CloseWindow", SC_CLOSE)] {
         let button: ButtonBase = root.FindName(name)?.cast()?;
