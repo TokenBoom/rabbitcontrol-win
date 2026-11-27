@@ -160,6 +160,7 @@ fn pipe_serve_loop(stop: &AtomicBool) {
             Ok(Request::Ping) => {
                 Response::ok_json(format!("{{\"version\":\"{}\"}}", env!("CARGO_PKG_VERSION")))
             }
+            Ok(Request::Inject { payload }) => crate::inject::inject_proxy_payload(&payload),
             Ok(Request::Status) => Response::ok_json(format!(
                 "{{\"version\":\"{}\",\"agent_managed\":true,\"uptime_sec\":{}}}",
                 env!("CARGO_PKG_VERSION"),

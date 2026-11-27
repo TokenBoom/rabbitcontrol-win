@@ -18,6 +18,14 @@ pub const PIPE_NAME: &str = "\\\\.\\pipe\\rabbitcontrol-daemon";
 pub enum Request {
     /// 存活与版本探测。
     Ping,
+    /// 代理注入一批输入事件（Base64(rc_input 线格式)）。
+    ///
+    /// 仅 LocalSystem daemon 可穿透 UIPI（锁屏/UAC/提权窗口）。
+    #[serde(rename = "inject")]
+    Inject {
+        /// Base64 编码的线格式事件序列。
+        payload: String,
+    },
     /// 服务状态（版本/运行时长/监管 agent 状态）。
     Status,
     /// 请求服务停止（服务控制管理器之外的软停通道）。

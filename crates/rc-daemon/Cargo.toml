@@ -11,6 +11,8 @@ name = "rc-daemon"
 path = "src/main.rs"
 
 [dependencies]
+rc-input.workspace = true
+rc-input-win = { path = "../rc-input-win" }
 rc-platform-win = { path = "../rc-platform-win" }
 rc-types.workspace = true
 serde.workspace = true

@@ -28,6 +28,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK,
     MOUSEEVENTF_WHEEL, MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP,
 };
+pub mod proxy;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
 };
@@ -163,8 +164,12 @@ impl InputInjector for InputBridge {
             }
             let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
             if sent as usize != inputs.len() {
+                // UIPI 拦截（锁屏/UAC/提权窗口）：降级到 daemon（LocalSystem）代理注入
+                if proxy::proxy_inject(std::slice::from_ref(event)).map_err(Error::InvalidConfig)? {
+                    continue;
+                }
                 return Err(Error::InvalidConfig(format!(
-                    "SendInput 只注入 {sent}/{} 条（目标上下文可能拒注入）",
+                    "SendInput 只注入 {sent}/{} 条且守护代理不可达（目标上下文拒注入）",
                     inputs.len()
                 )));
             }

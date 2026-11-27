@@ -5,7 +5,8 @@
 //! - 以 Windows Service 运行（`StartServiceCtrlDispatcherW`），
 //!   LocalSystem 权限；安装/卸载/启停/状态作为子命令暴露（需管理员）；
 //! - 职责仅限需要提权或跨会话的操作：UAC 安全桌面/锁屏下的输入
-//!   注入代理（后续批次）、显示模式切换（后续批次）、agent
+//!   注入代理（`inject` 操作，LocalSystem 令牌穿透 UIPI）、显示模式
+//!   切换（后续批次）、agent
 //!   （rabbitcontrol-win）进程监管——活动控制台会话出现时以用户令牌
 //!   拉起 agent，注销时终止；
 //! - 与管理端经命名管道 `\\.\pipe\rabbitcontrol-daemon` 通信
@@ -25,6 +26,7 @@
 //! ```
 
 mod firewall;
+mod inject;
 mod pipe;
 mod protocol;
 mod service;

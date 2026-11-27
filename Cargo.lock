@@ -883,6 +883,8 @@ dependencies = [
 name = "rc-daemon"
 version = "0.1.0"
 dependencies = [
+ "rc-input",
+ "rc-input-win",
  "rc-platform-win",
  "rc-types",
  "serde",
