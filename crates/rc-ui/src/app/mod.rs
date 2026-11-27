@@ -208,6 +208,20 @@ impl App {
                 events.send(Event::AutoStartFinished(Ok(running)));
             });
         }
+        // M6.3a 启动时后台自动检查更新（失败静默，不打扰用户）
+        {
+            let events = app.sender();
+            thread::spawn(move || {
+                if let Ok(check) = crate::biz::update_check::check() {
+                    if check.is_newer {
+                        events.send(Event::UpdateCheckFinished(Ok(format!(
+                            "新版本 {} 可用（设置页可查看详情）",
+                            check.version
+                        ))));
+                    }
+                }
+            });
+        }
         app.update_caption()?;
         app.apply_scale()?;
         if app.auth.has_saved_session() {
