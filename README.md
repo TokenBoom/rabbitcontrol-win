@@ -23,7 +23,9 @@ RabbitControl Windows 客户端与硬件适配仓库，基于 [`TokenBoom/rabbit
 - **编码**：MF H.264 硬件编码（零拷贝 NV12 纹理入、CBR + 低延迟 + 按需 IDR）
 - **注入**：SendInput（虚拟屏多屏映射、E0 前缀扫描码）
 - **音频**：WASAPI 环回采集（float32→i16、20ms 块）
-- **服务**：rc-daemon Windows Service（防火墙规则自动管理、会话监管、开机自启）
+- **后台被控进程 `rc-host-agent`**：主界面关掉以后仍保持在线、可被控；托盘图标显示状态，菜单提供打开主界面 / 开关被控 / 断开连接 / 退出；有人请求控制时弹出独立的审批小窗（主界面没开也能审批）
+- **开关持久化**：「允许被控」开一次之后，关窗、重启都保持（默认关闭，必须本人显式开启）
+- **服务**：rc-daemon Windows Service（登录时拉起后台进程、防火墙规则自动管理、UAC/锁屏注入代理、开机自启）
 
 ### 工具与诊断
 
@@ -36,16 +38,17 @@ RabbitControl Windows 客户端与硬件适配仓库，基于 [`TokenBoom/rabbit
 
 1. **共享 D3D11 设备（`rc-d3d11`）**：DXGI 采集输出、MF 编码输入、MF 解码输出、渲染上屏在同一设备上零拷贝。全进程设备单例，后端间传递裸纹理指针。
 2. **统一 Win32 基础层（`rc-win32core`）**：COM 套间、隐藏消息窗口与消息泵、MMCSS 线程 QoS、电源请求、QPC 时钟集中管理。
-3. **被控端双进程**：`rc-daemon`（LocalSystem 服务，Session 0）管提权操作（UAC/锁屏注入代理、agent 监管）；`rc-host-win`（用户会话 agent）是采集/注入/渲染执行者。两者经命名管道通信。
+3. **被控端三进程（与 macOS 客户端同一模型）**：`rabbitcontrol-win.exe`（主界面，控制端）、`rc-host-agent.exe`（后台被控进程：托盘、审批小窗、信令与被控服务）、`rc-daemon.exe`（LocalSystem 服务：登录时把后台进程拉进用户会话，以及需要提权的操作）。同一设备同一时刻只能有一条信令连接（服务端会以新连接顶掉旧连接），所以主界面打开期间由主界面托管、后台进程让位，主界面退出后后台进程自动接管。三者的信令运行时与被控编排共用 `rc-appcore` 里的同一份实现。
 
-## 仓库结构（14 crates）
+## 仓库结构（15 crates）
 
 | 分层 | Crate | 职责 |
 |---|---|---|
 | 平台基础 | `rc-win32core`, `rc-d3d11` | COM 套间/消息泵/MMCSS/时钟；共享 D3D11 设备上下文 |
 | 硬件后端 | `rc-capture-win`, `rc-encode-mf`, `rc-decode-mf`, `rc-render-win` | DXGI Duplication 采集、MF 零拷贝 H.264 编解码（`GetOutputAvailableType` 协商）、D3D11 渲染 |
 | 系统后端 | `rc-input-win`, `rc-audio-win`, `rc-clipboard-win` | SendInput 注入、WASAPI 环回采集与播放、Win32 剪贴板 |
-| 被控端 | `rc-host-win`, `rc-daemon` | 用户会话代理与 LocalSystem 服务 |
+| 共享应用逻辑 | `rc-appcore` | 信令运行时、被控编排、认证文案、进程间管道协议（主界面与后台进程共用） |
+| 被控端 | `rc-host-win`, `rc-daemon` | 后台被控进程 `rc-host-agent`（引擎/托盘/审批窗/管道服务）与 LocalSystem 服务 |
 | 平台总成 | `rc-platform-win` | 统一注入 rabbitcontrol-core 的注册入口 |
 | 应用 | `rc-ui`, `rc-cli` | XAML Islands 桌面端（登录/设备/会话/工具）；诊断命令行 |
 
@@ -93,8 +96,9 @@ python scripts/make-icon.py   # 需要 Pillow
 
 1. **源码可审计**：全部代码托管于 GitHub，构建流程（CI + 本地脚本）公开可查
 2. **SHA256 校验**：每次 Release 附带 zip 包，下载后可用 `Get-FileHash` 校验一致性
-3. **防火墙路径规则**：安装守护服务时自动注册路径级允许规则，重编译不影响授权
-4. **命名管道 DACL**：守护服务管道默认仅允许 SYSTEM/管理员连接
-5. **网络隔离**：被控端仅在用户显式开启「本机被控」开关后才监听端口；每次连接均需审批或密码验证
+3. **防火墙路径规则**：安装守护服务时自动为三个程序注册路径级允许规则，重编译不影响授权
+4. **命名管道访问控制**：守护服务管道只允许本机交互登录的用户、SYSTEM 与管理员连接；注入键鼠这类特权操作逐条核对调用方，必须是当前桌面会话的登录用户本人
+5. **网络隔离**：被控端仅在用户显式开启「允许被控」开关后才监听端口；每次连接均需审批或密码验证；开关默认关闭
+6. **后台进程可退出**：托盘菜单「退出 RabbitControl」会同时停掉后台进程并让守护服务不再拉起，下次打开主界面时恢复
 
-首次运行时 Windows 防火墙可能弹窗（未签名 exe 的正常行为），点「允许」即可；安装后台服务后不再弹窗。
+首次运行时 Windows 防火墙会为主界面、后台进程这两个程序各弹一次入站确认（未签名 exe 的正常行为），点「允许」即可；安装后台服务后自动注册路径规则，之后不再弹。开发时 `cargo test` 不会触发防火墙确认（单测不打开监听端口）。
