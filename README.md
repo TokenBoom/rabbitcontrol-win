@@ -66,6 +66,16 @@ powershell -ExecutionPolicy Bypass -File scripts\package-win.ps1
 
 `v*` tag push 触发 GitHub Actions 自动构建并上传 Release（`.github/workflows/release.yml`）。
 
+## 图标
+
+`crates/rc-ui/app-icon-source.png` 是设计方交付的 256×256 图标母版；`crates/rc-ui/app.ico` 由 `scripts/make-icon.py` 从母版生成——256 帧原样保留，其余 9 个尺寸（16–128）为母版降采样，全部是带 AND 掩码的 32bpp BMP 帧。换图标时只替换母版并重新运行脚本，不要手工重绘：
+
+```powershell
+python scripts/make-icon.py   # 需要 Pillow
+```
+
+应用内（标题栏 / 登录页）由 `rc-ui` 的 `ui/brand.rs` 按显示尺寸从 ICO 里挑最合适的帧，单元测试会校验 256 帧与母版逐像素一致。
+
 ## 本地联合调试
 
 若需修改相邻的 `../rabbitcontrol-core`，在本地未跟踪的 `.cargo/config.toml` 中加入 `[patch."https://github.com/TokenBoom/rabbitcontrol-core.git"]` 将全部 18 个 `rc-*` crate 指向本地路径（README 旧版有完整清单）。

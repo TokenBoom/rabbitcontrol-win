@@ -1441,14 +1441,20 @@ impl App {
     }
 
     /// 标题栏 + 登录页使用仓库 `app.ico` 的真实 logo（解码失败时保留占位）。
+    /// 标题栏 + 登录页使用 `app.ico` 的真实 logo：按实际显示倍率挑一张
+    /// 「不小于目标的最小帧」，各 DPI 下都是清晰的原始像素。
     fn apply_brand(&self) {
-        let Some(bitmap) = crate::ui::brand::icon_bitmap() else {
-            return;
-        };
-        let Ok(source) = bitmap.cast::<windows::UI::Xaml::Media::ImageSource>() else {
-            return;
-        };
-        for name in ["TitleLogo", "BrandLogo"] {
+        // 根 Grid 带 RenderTransform 缩放，实际显示倍率 = DPI 倍率 × 小屏适配系数
+        let dpi = f64::from(unsafe { GetDpiForWindow(self.hwnd) }.max(96));
+        let scale = dpi / 96.0 * work_area_fit(self.hwnd);
+        // 母版四周留白约占 10%，Image 框等比放大后可见图形保持原定尺寸
+        for (name, dip) in [("TitleLogo", 22.0), ("BrandLogo", 80.0)] {
+            let Some(bitmap) = crate::ui::brand::icon_bitmap((dip * scale).round() as u32) else {
+                continue;
+            };
+            let Ok(source) = bitmap.cast::<windows::UI::Xaml::Media::ImageSource>() else {
+                continue;
+            };
             if let Some(img) = self.find_opt::<windows::UI::Xaml::Controls::Image>(name) {
                 let _ = img.SetSource(&source);
             }

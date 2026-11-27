@@ -10,7 +10,7 @@
   <Grid>
     <Border x:Name="DragRegion" Background="Transparent"/>
     <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0" Spacing="8" IsHitTestVisible="False">
-      <Image x:Name="TitleLogo" Width="18" Height="18" Stretch="Uniform"/>
+      <Image x:Name="TitleLogo" Width="22" Height="22" Stretch="Uniform"/>
       <TextBlock x:Name="AppTitle" Text="RabbitControl" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextSecondaryBrush}"/>
     </StackPanel>
     <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
@@ -497,7 +497,7 @@
     <StackPanel x:Name="LoginView" Width="360" HorizontalAlignment="Center" VerticalAlignment="Center">
       <!-- 品牌 logo 区域 -->
       <StackPanel HorizontalAlignment="Center" Margin="0,0,0,24">
-        <Image x:Name="BrandLogo" Width="64" Height="64" HorizontalAlignment="Center" Margin="0,0,0,12"/>
+        <Image x:Name="BrandLogo" Width="80" Height="80" HorizontalAlignment="Center" Margin="0,0,0,4"/>
         <TextBlock Text="RabbitControl" FontSize="24" FontWeight="Bold" Foreground="{ThemeResource TextPrimaryBrush}" HorizontalAlignment="Center"/>
         <TextBlock Text="远程桌面 · 账号登录" HorizontalAlignment="Center" Foreground="{ThemeResource TextTertiaryBrush}" FontSize="13" Margin="0,6,0,0"/>
       </StackPanel>
