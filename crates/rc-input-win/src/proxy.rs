@@ -9,27 +9,15 @@
 //!
 //! # 协议
 //!
-//! 复用 `rc-daemon` 的行分隔 JSON：`{"op":"inject","events":[…线格式Base64…]}`，
+//! 复用 `rc-daemon` 的行分隔 JSON：`{"op":"inject","payload":"…线格式Base64…"}`，
 //! 事件负载用 `rc_input` 的线格式（与网络传输同编码），daemon 解码后用
-//! 它自己的 SendInput（LocalSystem 令牌，可穿透 UIPI）注入。
-
-#![allow(unsafe_code)] // 命名管道 FFI
-
-use std::time::Duration;
+//! 它自己的 SendInput（LocalSystem 令牌，可穿透 UIPI）注入。守护服务只接受
+//! 「当前桌面会话登录用户」的进程发来的注入请求。
 
 use rc_input::{decode_events, encode_events, InputEvent};
-use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
-use windows::Win32::Storage::FileSystem::{
-    CreateFileW, ReadFile, WriteFile, FILE_SHARE_NONE, OPEN_EXISTING,
-};
 
-/// 守护管道名称（与 rc-daemon `protocol::PIPE_NAME` 一致）。
-const PIPE_NAME: &str = "\\\\.\\pipe\\rabbitcontrol-daemon";
-/// 连接超时内的重试次数（daemon 忙时管道 busy）。
-const CONNECT_RETRIES: u32 = 3;
-/// 每次重试间隔。
-const RETRY_INTERVAL: Duration = Duration::from_millis(30);
+/// 守护服务单次调用的超时：注入代理在输入热路径上，不能被卡住。
+const PROXY_TIMEOUT_MS: u32 = 500;
 
 /// 尝试经守护管道代理注入一批事件。
 ///
@@ -44,49 +32,12 @@ pub fn proxy_inject(events: &[InputEvent]) -> Result<bool, String> {
     encode_events(events, &mut wire);
     let b64 = base64_encode(&wire);
     let request = format!("{{\"op\":\"inject\",\"payload\":\"{b64}\"}}");
-    match pipe_roundtrip(&request) {
-        Some(reply) => {
-            // daemon 回 {"ok":true} 视为接收
-            Ok(reply.contains("\"ok\":true"))
-        }
-        None => Ok(false),
+    match rc_appcore::daemon_ipc::call(&request, PROXY_TIMEOUT_MS) {
+        // daemon 回 {"ok":true} 视为接收
+        Ok(reply) => Ok(reply.contains("\"ok\":true")),
+        // 不可达、被拒或超时：调用方保留原错误
+        Err(_) => Ok(false),
     }
-}
-
-/// 打开守护管道并一次请求-响应；不可达返回 `None`。
-fn pipe_roundtrip(request: &str) -> Option<String> {
-    let name: Vec<u16> = PIPE_NAME.encode_utf16().chain(std::iter::once(0)).collect();
-    for attempt in 0..CONNECT_RETRIES {
-        let handle: HANDLE = unsafe {
-            CreateFileW(
-                PCWSTR(name.as_ptr()),
-                (windows::Win32::Storage::FileSystem::FILE_GENERIC_READ
-                    | windows::Win32::Storage::FileSystem::FILE_GENERIC_WRITE)
-                    .0,
-                FILE_SHARE_NONE,
-                None,
-                OPEN_EXISTING,
-                windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_NORMAL,
-                None,
-            )
-        }
-        .ok()?;
-        let mut data = request.as_bytes().to_vec();
-        data.push(b'\n');
-        let mut written = 0u32;
-        let write_ok = unsafe { WriteFile(handle, Some(&data), Some(&mut written), None) }.is_ok();
-        let mut buf = [0u8; 4096];
-        let mut read = 0u32;
-        let read_ok = unsafe { ReadFile(handle, Some(&mut buf), Some(&mut read), None) }.is_ok();
-        let _ = unsafe { CloseHandle(handle) };
-        if write_ok && read_ok {
-            return Some(String::from_utf8_lossy(&buf[..read as usize]).into_owned());
-        }
-        if attempt + 1 < CONNECT_RETRIES {
-            std::thread::sleep(RETRY_INTERVAL);
-        }
-    }
-    None
 }
 
 /// 简易 Base64（标准字母表，无换行）。

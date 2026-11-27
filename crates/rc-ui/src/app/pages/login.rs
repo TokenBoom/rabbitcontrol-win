@@ -98,6 +98,11 @@ impl App {
             // 强制重登：后台维护线程回调，直接停运行时并回登录页。
             events.send(Event::LogoutFinished(Err(String::new())));
         });
+        // 「允许被控」此前开着：后台进程已让位，由主界面把被控服务续上
+        if rc_appcore::agent_state::AgentState::load().host_enabled {
+            let _ = self.set_checked_named("HostSwitch", true);
+            self.on_host_toggle(true)?;
+        }
         Ok(())
     }
 

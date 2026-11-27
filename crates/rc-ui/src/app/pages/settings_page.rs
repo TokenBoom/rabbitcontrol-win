@@ -65,6 +65,18 @@ impl App {
         if let Some(box_) = self.find_opt::<windows::UI::Xaml::Controls::TextBox>("ProxyUrl") {
             box_.SetText(HSTRING::from(crate::biz::proxy_cfg::display(&prefs.proxy)))?;
         }
+        // 自定义访问密码回填（留空 = 使用临时码）：后台被控进程接管时沿用同一份偏好
+        if let Some(box_) =
+            self.find_opt::<windows::UI::Xaml::Controls::PasswordBox>("HostPassword")
+        {
+            if let Some(password) = prefs
+                .custom_host_password
+                .as_deref()
+                .filter(|password| !password.is_empty())
+            {
+                box_.SetPassword(password)?;
+            }
+        }
         if let Some(toggle) = self.find_opt::<ToggleSwitch>("AssistToggle") {
             toggle.SetIsOn(true)?;
         }

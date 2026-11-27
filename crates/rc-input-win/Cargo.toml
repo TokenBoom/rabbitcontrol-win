@@ -7,6 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+rc-appcore = { path = "../rc-appcore" }
 rc-input.workspace = true
 rc-types.workspace = true
 rc-win32core = { path = "../rc-win32core" }

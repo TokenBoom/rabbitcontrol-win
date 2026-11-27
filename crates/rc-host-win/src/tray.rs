@@ -1,134 +1,116 @@
-//! 托盘图标（`Shell_NotifyIconW`）：被控端状态展示与快捷菜单。
+//! 托盘图标与菜单（`Shell_NotifyIconW`）。
 //!
-//! - 图标：状态着色（空闲灰 / 待审批黄 / 会话中绿），运行时加载内嵌资源；
-//! - 菜单：打开主界面 / 被控开关 / 退出；
-//! - 事件经 [`TrayEvents`] 回调给宿主（agent 主循环）。
+//! 主界面关掉以后，托盘图标是「RabbitControl 仍在后台运行」的唯一可见提示：
+//! 提示文案反映当前状态，会话开始 / 结束弹气泡通知，菜单提供打开主界面、
+//! 开关被控、断开连接、复制设备码与整体退出。
+//!
+//! 使用 `NOTIFYICON_VERSION_4` 消息语义：回调以 `WM_COMMAND` 形式到达
+//! （`wParam` 低 16 位为图标 ID，高 16 位为事件）。资源管理器重启后会广播
+//! `TaskbarCreated`，收到时需要重新挂图标。
 
-#![allow(unsafe_code)] // Shell_NotifyIconW FFI
-
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-
-use windows::core::PCWSTR;
-use windows::Win32::Foundation::HINSTANCE;
-use windows::Win32::Foundation::HWND;
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::core::{Error, Result, PCWSTR};
+use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::UI::Shell::{
-    Shell_NotifyIconW, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION,
-    NOTIFYICONDATAW, NOTIFY_ICON_DATA_FLAGS,
+    Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_INFO, NIM_ADD, NIM_DELETE,
+    NIM_MODIFY, NIM_SETVERSION, NOTIFYICONDATAW, NOTIFYICON_VERSION_4, NOTIFY_ICON_DATA_FLAGS,
 };
-use windows::Win32::UI::WindowsAndMessaging::LoadIconW;
+use windows::Win32::UI::WindowsAndMessaging::{
+    AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, LoadIconW, RegisterWindowMessageW,
+    SetForegroundWindow, TrackPopupMenu, MF_CHECKED, MF_GRAYED, MF_SEPARATOR, MF_STRING,
+    TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_CONTEXTMENU,
+};
 
-/// 托盘回调消息 ID（WM_APP + 2，避开 Island 的 UI_EVENT）。
-pub const TRAY_MSG: u32 = 5;
+use crate::win::{exe_instance, wide, x_param, y_param};
 
-/// 托盘图标状态。
+/// 托盘回调消息 ID（`WM_COMMAND` 形式，见模块说明）。
+pub const TRAY_CALLBACK_MSG: u32 = WM_APP + 1;
+/// 左键单击 / 键盘选中（`NIN_SELECT`）。
+const NIN_SELECT: u32 = 1024;
+/// 托盘图标在 exe 资源里的 ID（与主界面同一个图标）。
+const ICON_RESOURCE_ID: u16 = 1;
+/// 常规图标标志（不含只在弹气泡那一次使用的 `NIF_INFO`）。
+fn base_flags() -> NOTIFY_ICON_DATA_FLAGS {
+    NIF_MESSAGE | NIF_ICON | NIF_TIP
+}
+
+/// 托盘菜单命令。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TrayState {
-    /// 空闲（被控服务未开）。
-    Idle,
-    /// 待审批。
-    Pending,
-    /// 被控会话进行中。
-    Active,
+pub enum TrayCommand {
+    /// 打开或激活主界面。
+    OpenGui,
+    /// 开关「允许被控」。
+    ToggleHost,
+    /// 断开当前正在控制本机的远端。
+    Disconnect,
+    /// 整体退出 RabbitControl（后台进程 + 请求守护服务暂不拉起）。
+    Quit,
 }
 
-impl TrayState {
-    /// 提示文本。
-    pub fn tooltip(self) -> &'static str {
-        match self {
-            TrayState::Idle => "RabbitControl 被控端（空闲）",
-            TrayState::Pending => "RabbitControl 被控端（有连接待审批）",
-            TrayState::Active => "RabbitControl 被控端（被控中）",
-        }
-    }
-
-    /// 系统图标资源 ID（1 = exe 嵌入的应用图标）。
-    pub fn icon_id(self) -> PCWSTR {
-        let _ = self;
-        PCWSTR(1 as _)
-    }
+/// 托盘菜单的可选项（随状态变化）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MenuState {
+    /// 「允许被控」是否开启（菜单打勾）。
+    pub host_enabled: bool,
+    /// 有远端会话进行中（「断开连接」才可用）。
+    pub session_active: bool,
 }
 
-/// 托盘句柄封装（Drop 时自动移除图标）。
+/// 托盘图标（离开作用域自动移除）。
 pub struct TrayIcon {
-    hwnd: HWND,
     data: NOTIFYICONDATAW,
-    visible: Arc<AtomicBool>,
 }
 
 impl TrayIcon {
-    /// 注册托盘图标（挂到 `hwnd` 的消息窗口，TRAY_MSG 回调）。
-    pub fn new(hwnd: HWND, callback_msg: u32) -> windows::core::Result<Self> {
+    /// 挂上托盘图标；回调发往 `hwnd` 的消息循环。
+    pub fn add(hwnd: HWND, tooltip: &str) -> Result<Self> {
+        let icon = unsafe { LoadIconW(exe_instance(), PCWSTR(ICON_RESOURCE_ID as *const u16))? };
         let mut data = NOTIFYICONDATAW {
-            uID: TRAY_MSG,
+            cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
             hWnd: hwnd,
-            uFlags: NOTIFY_ICON_DATA_FLAGS(NIF_MESSAGE.0 | NIF_TIP.0),
-            uCallbackMessage: callback_msg,
+            uID: 1,
+            uFlags: base_flags(),
+            uCallbackMessage: TRAY_CALLBACK_MSG,
+            hIcon: icon,
             ..Default::default()
         };
-        // NIM_ADD 后设置版本为 4（支持 NOTIFYICON_VERSION_4 消息语义）
+        write_fixed(&mut data.szTip, tooltip);
+        if !unsafe { Shell_NotifyIconW(NIM_ADD, &data) }.as_bool() {
+            return Err(Error::from_win32());
+        }
+        data.Anonymous.uVersion = NOTIFYICON_VERSION_4;
         unsafe {
-            if !Shell_NotifyIconW(NIM_ADD, &data).as_bool() {
-                return Err(windows::core::Error::from_win32());
-            }
-            // NOTIFYICON_VERSION_4：uVersion 存于 uTimeout union 字段
-            data.Anonymous.uTimeout = 4;
             let _ = Shell_NotifyIconW(NIM_SETVERSION, &data);
         }
-        Ok(Self {
-            hwnd,
-            data,
-            visible: Arc::new(AtomicBool::new(true)),
-        })
+        Ok(Self { data })
     }
 
-    /// 更新状态（图标提示文案随状态变化）。
-    pub fn set_state(&mut self, state: TrayState) {
-        let tip = state.tooltip();
-        let len = tip.encode_utf16().count().min(127);
-        self.data.uFlags = NOTIFY_ICON_DATA_FLAGS(NIF_TIP.0);
-        self.data.szTip[..len].copy_from_slice(&tip.encode_utf16().collect::<Vec<_>>()[..len]);
-        self.data.szTip[len] = 0;
+    /// 更新提示文案。
+    pub fn set_tooltip(&mut self, tooltip: &str) {
+        write_fixed(&mut self.data.szTip, tooltip);
         unsafe {
             let _ = Shell_NotifyIconW(NIM_MODIFY, &self.data);
         }
     }
 
-    /// 是否可见。
-    pub fn is_visible(&self) -> bool {
-        self.visible.load(Ordering::SeqCst)
-    }
-
-    /// 隐藏托盘图标（登录主界面时不需要被控托盘）。
-    pub fn hide(&self) {
-        if self.visible.swap(false, Ordering::SeqCst) {
-            unsafe {
-                let _ = Shell_NotifyIconW(NIM_DELETE, &self.data);
-            }
+    /// 弹一条气泡通知。
+    pub fn show_balloon(&mut self, title: &str, text: &str) {
+        write_fixed(&mut self.data.szInfoTitle, title);
+        write_fixed(&mut self.data.szInfo, text);
+        self.data.uFlags = base_flags() | NIF_INFO;
+        self.data.dwInfoFlags = NIIF_INFO;
+        unsafe {
+            let _ = Shell_NotifyIconW(NIM_MODIFY, &self.data);
         }
+        // 之后改提示文案时不再重复弹这条气泡
+        self.data.uFlags = base_flags();
     }
 
-    /// 重新显示。
-    pub fn show(&self) {
-        if !self.visible.swap(true, Ordering::SeqCst) {
-            unsafe {
-                let _ = Shell_NotifyIconW(NIM_ADD, &self.data);
-                let mut d = NOTIFYICONDATAW {
-                    uID: TRAY_MSG,
-                    hWnd: self.hwnd,
-                    ..Default::default()
-                };
-                d.Anonymous.uTimeout = 4;
-                let _ = Shell_NotifyIconW(NIM_SETVERSION, &d);
-            }
+    /// 资源管理器重启后重新挂上图标。
+    pub fn re_add(&mut self) {
+        unsafe {
+            let _ = Shell_NotifyIconW(NIM_ADD, &self.data);
+            let _ = Shell_NotifyIconW(NIM_SETVERSION, &self.data);
         }
-    }
-
-    /// 状态图标句柄（供消息处理绘制）。
-    pub fn load_state_icon(state: TrayState) -> windows::core::Result<isize> {
-        let h = unsafe { LoadIconW(exe_instance(), state.icon_id())? };
-        Ok(h.0 as isize)
     }
 }
 
@@ -140,7 +122,106 @@ impl Drop for TrayIcon {
     }
 }
 
-/// exe 内嵌图标句柄（模块默认实例）。
-fn exe_instance() -> HINSTANCE {
-    HINSTANCE(unsafe { GetModuleHandleW(None).unwrap_or_default() }.0)
+/// `TaskbarCreated` 广播消息的 ID（系统注册的全局消息，每进程取一次）。
+pub fn taskbar_created_msg() -> u32 {
+    static MSG: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *MSG.get_or_init(|| {
+        let name = wide("TaskbarCreated");
+        unsafe { RegisterWindowMessageW(PCWSTR(name.as_ptr())) }
+    })
+}
+
+/// 托盘回调是否要求弹出菜单；是则返回菜单应出现的屏幕坐标。
+pub fn menu_anchor(wparam: WPARAM, lparam: LPARAM) -> Option<(i32, i32)> {
+    let w = wparam.0 as u32;
+    let (id, event) = (w & 0xffff, w >> 16);
+    if id != 1 {
+        return None;
+    }
+    match event {
+        WM_CONTEXTMENU => Some((x_param(lparam), y_param(lparam))),
+        NIN_SELECT => {
+            let mut point = POINT::default();
+            unsafe { GetCursorPos(&mut point) }.ok()?;
+            Some((point.x, point.y))
+        }
+        _ => None,
+    }
+}
+
+/// 把文本写进定长 NUL 结尾的缓冲（超长截断）。
+fn write_fixed(buf: &mut [u16], text: &str) {
+    let units: Vec<u16> = text.encode_utf16().take(buf.len() - 1).collect();
+    buf.fill(0);
+    buf[..units.len()].copy_from_slice(&units);
+}
+
+fn append(
+    menu: windows::Win32::UI::WindowsAndMessaging::HMENU,
+    flags: windows::Win32::UI::WindowsAndMessaging::MENU_ITEM_FLAGS,
+    id: usize,
+    label: &str,
+) {
+    // 宽字符串必须活到 AppendMenuW 返回之后
+    let label = wide(label);
+    unsafe {
+        let _ = AppendMenuW(menu, flags, id, PCWSTR(label.as_ptr()));
+    }
+}
+
+/// 弹出托盘菜单并返回所选命令（直接关闭菜单返回 `None`）。
+pub fn show_menu(hwnd: HWND, at: (i32, i32), state: MenuState) -> Option<TrayCommand> {
+    const CMD_OPEN_GUI: usize = 1;
+    const CMD_TOGGLE_HOST: usize = 2;
+    const CMD_DISCONNECT: usize = 3;
+    const CMD_QUIT: usize = 5;
+    let menu = unsafe { CreatePopupMenu() }.ok()?;
+    append(menu, MF_STRING, CMD_OPEN_GUI, "打开主界面");
+    append(menu, MF_SEPARATOR, 0, "");
+    append(
+        menu,
+        MF_STRING
+            | if state.host_enabled {
+                MF_CHECKED
+            } else {
+                MF_STRING
+            },
+        CMD_TOGGLE_HOST,
+        "允许被控",
+    );
+    append(
+        menu,
+        MF_STRING
+            | if state.session_active {
+                MF_STRING
+            } else {
+                MF_GRAYED
+            },
+        CMD_DISCONNECT,
+        "断开连接",
+    );
+    append(menu, MF_SEPARATOR, 0, "");
+    append(menu, MF_STRING, CMD_QUIT, "退出 RabbitControl");
+    // 菜单需要一个前台窗口配合，点击别处时才会自动关闭
+    unsafe {
+        let _ = SetForegroundWindow(hwnd);
+        let chosen = TrackPopupMenu(
+            menu,
+            TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY,
+            at.0,
+            at.1,
+            0,
+            hwnd,
+            None,
+        )
+        .0 as usize;
+        let _ = DestroyMenu(menu);
+        match chosen {
+            CMD_OPEN_GUI => Some(TrayCommand::OpenGui),
+            CMD_TOGGLE_HOST => Some(TrayCommand::ToggleHost),
+            CMD_DISCONNECT if state.session_active => Some(TrayCommand::Disconnect),
+            CMD_QUIT => Some(TrayCommand::Quit),
+            _ => None,
+        }
+    }
 }

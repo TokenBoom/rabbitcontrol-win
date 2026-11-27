@@ -894,6 +894,7 @@ dependencies = [
 name = "rc-daemon"
 version = "0.1.0"
 dependencies = [
+ "rc-appcore",
  "rc-input",
  "rc-input-win",
  "rc-platform-win",
@@ -967,9 +968,13 @@ dependencies = [
 name = "rc-host-win"
 version = "0.1.0"
 dependencies = [
- "rc-types",
+ "embed-resource",
+ "rc-appcore",
+ "rc-client-core",
+ "rc-platform-win",
+ "rc-session",
  "rc-win32core",
- "serde",
+ "serde_json",
  "windows 0.58.0",
 ]
 
@@ -986,6 +991,7 @@ dependencies = [
 name = "rc-input-win"
 version = "0.1.0"
 dependencies = [
+ "rc-appcore",
  "rc-input",
  "rc-types",
  "rc-win32core",

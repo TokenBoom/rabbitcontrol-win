@@ -7,7 +7,8 @@
 //!   只能有一条信令连接——服务端会以新连接顶掉旧连接）；
 //! - [`host`]：被控服务（[`rc_client_core::host_bridge::HostHandle`]）编排；
 //! - [`agent_state`]：后台被控进程的持久化开关；
-//! - [`agent_ipc`]：主界面 ↔ 后台被控进程的命名管道协议。
+//! - [`agent_ipc`]：主界面 ↔ 后台被控进程的命名管道协议；
+//! - [`named_pipe`]：命名管道服务端的通用骨架（守护服务与后台进程共用）。
 //!
 //! 本 crate 不引用任何 UI 框架；可单测。
 
@@ -17,5 +18,7 @@
 pub mod agent_ipc;
 pub mod agent_state;
 pub mod auth_text;
+pub mod daemon_ipc;
 pub mod host;
+pub mod named_pipe;
 pub mod signal_runtime;

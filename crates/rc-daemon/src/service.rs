@@ -18,8 +18,12 @@ use windows::Win32::System::RemoteDesktop::{WTSGetActiveConsoleSessionId, WTSQue
 use windows::Win32::System::Services::*;
 use windows::Win32::System::Threading::{CreateProcessAsUserW, GetExitCodeProcess};
 
-use crate::pipe::PipeServer;
-use crate::protocol::{parse_request, render_response, Request, Response};
+use rc_appcore::named_pipe::{encode_wide, PipeServer};
+
+use crate::protocol::{
+    authorize, parse_request, render_response, Request, Response, MAX_FRAME_BYTES, PIPE_NAME,
+};
+use crate::security::{pipe_client_identity, session_user_sid, PipeSecurity};
 
 /// 服务注册名（SCM 键）。
 pub const SERVICE_NAME: &str = "RabbitControlDaemon";
@@ -27,17 +31,19 @@ pub const SERVICE_NAME: &str = "RabbitControlDaemon";
 pub const SERVICE_DISPLAY: &str = "RabbitControl 后台服务";
 /// 服务描述。
 pub const SERVICE_DESC: &str = "RabbitControl 被控提权代理与 agent 监管（LocalSystem）";
-/// agent 可执行名（与 rc-daemon 同目录）。
-pub const AGENT_EXE: &str = "rabbitcontrol-win.exe";
+/// agent 可执行名（与 rc-daemon 同目录）：登录会话内的后台被控进程。
+pub const AGENT_EXE: &str = rc_appcore::agent_ipc::AGENT_EXE;
 
 /// 全局停止标志（控制处理器 / 管道线程共享）。
 static STOP: AtomicBool = AtomicBool::new(false);
+/// 用户从托盘主动退出后台进程后置位：不再拉起，直到主界面打开（`resume`）或服务重启。
+static STANDDOWN: AtomicBool = AtomicBool::new(false);
 /// 服务状态句柄（SetServiceStatus 用；服务生命周期内有效）。
 static STATUS_HANDLE: std::sync::OnceLock<isize> = std::sync::OnceLock::new();
 
 /// SCM 服务主入口（子命令 `run`）。
 pub fn run_service() -> Result<(), String> {
-    let mut name = crate::pipe::encode_wide(SERVICE_NAME);
+    let mut name = encode_wide(SERVICE_NAME);
     let mut table = [
         SERVICE_TABLE_ENTRYW {
             lpServiceName: windows::core::PWSTR(name.as_mut_ptr()),
@@ -52,7 +58,7 @@ pub fn run_service() -> Result<(), String> {
 /// 服务主函数（SCM 线程调用）。
 unsafe extern "system" fn service_main(_argc: u32, _argv: *mut windows::core::PWSTR) {
     let Ok(handler) = RegisterServiceCtrlHandlerExW(
-        PCWSTR(crate::pipe::encode_wide(SERVICE_NAME).as_ptr()),
+        PCWSTR(encode_wide(SERVICE_NAME).as_ptr()),
         Some(control_handler),
         None,
     ) else {
@@ -136,9 +142,16 @@ fn report_status(state: SERVICE_STATUS_CURRENT_STATE, wait_hint_ms: u32) {
     }
 }
 
-/// 管道 IPC 服务循环（软停通道：`stop-daemon` 请求置 STOP）。
+/// 管道 IPC 服务循环：应答本机进程的请求，并按调用方身份限制特权操作。
 fn pipe_serve_loop(stop: &AtomicBool) {
-    let server = match PipeServer::new() {
+    let security = match PipeSecurity::interactive_only() {
+        Ok(security) => security,
+        Err(err) => {
+            eprintln!("[rc-daemon] 管道安全描述符创建失败：{err}");
+            return;
+        }
+    };
+    let server = match PipeServer::create(PIPE_NAME, MAX_FRAME_BYTES, Some(security.attributes())) {
         Ok(server) => server,
         Err(err) => {
             eprintln!("[rc-daemon] 管道创建失败：{err}");
@@ -146,7 +159,7 @@ fn pipe_serve_loop(stop: &AtomicBool) {
         }
     };
     while !stop.load(Ordering::SeqCst) && !STOP.load(Ordering::SeqCst) {
-        if server.wait_client(stop).is_none() {
+        if !server.wait_client(stop) {
             break;
         }
         let frame = match server.read_frame() {
@@ -157,26 +170,62 @@ fn pipe_serve_loop(stop: &AtomicBool) {
             }
         };
         let response = match parse_request(frame.trim_end_matches(['\n', '\r'])) {
-            Ok(Request::Ping) => {
-                Response::ok_json(format!("{{\"version\":\"{}\"}}", env!("CARGO_PKG_VERSION")))
-            }
-            Ok(Request::Inject { payload }) => crate::inject::inject_proxy_payload(&payload),
-            Ok(Request::Status) => Response::ok_json(format!(
-                "{{\"version\":\"{}\",\"agent_managed\":true,\"uptime_sec\":{}}}",
-                env!("CARGO_PKG_VERSION"),
-                uptime_sec()
-            )),
-            Ok(Request::StopDaemon) => {
-                STOP.store(true, Ordering::SeqCst);
-                Response::ok_json("{}".to_string())
+            Ok(request) => {
+                let caller = pipe_client_identity(server.raw_handle());
+                let console = console_identity();
+                let console = console
+                    .as_ref()
+                    .map(|(session_id, sid)| (*session_id, sid.as_slice()));
+                match authorize(&request, caller.as_ref(), console) {
+                    Ok(()) => execute(request),
+                    Err(reason) => {
+                        eprintln!("[rc-daemon] 拒绝请求 {request:?}：{reason}");
+                        Response::err(format!("拒绝：{reason}"))
+                    }
+                }
             }
             Err(err) => Response::err(err),
         };
         let _ = server.write_frame(&render_response(&response));
-        while server.has_pending() {
-            let _ = server.read_frame();
-        }
         server.finish_session();
+    }
+}
+
+/// 当前活动控制台会话及其登录用户 `(会话号, 用户 SID)`；没有登录桌面时为 `None`。
+fn console_identity() -> Option<(u32, Vec<u8>)> {
+    let session_id = unsafe { WTSGetActiveConsoleSessionId() };
+    if session_id == 0xFFFF_FFFF {
+        return None;
+    }
+    Some((session_id, session_user_sid(session_id)?))
+}
+
+/// 执行一条已通过鉴权的请求。
+fn execute(request: Request) -> Response {
+    match request {
+        Request::Ping => {
+            Response::ok_json(format!("{{\"version\":\"{}\"}}", env!("CARGO_PKG_VERSION")))
+        }
+        Request::Inject { payload } => crate::inject::inject_proxy_payload(&payload),
+        Request::Status => Response::ok_json(format!(
+            "{{\"version\":\"{}\",\"agent\":\"{}\",\"standdown\":{},\"uptime_sec\":{}}}",
+            env!("CARGO_PKG_VERSION"),
+            AGENT_EXE,
+            STANDDOWN.load(Ordering::SeqCst),
+            uptime_sec()
+        )),
+        Request::Standdown => {
+            STANDDOWN.store(true, Ordering::SeqCst);
+            Response::ok_json("{}".to_string())
+        }
+        Request::Resume => {
+            STANDDOWN.store(false, Ordering::SeqCst);
+            Response::ok_json("{}".to_string())
+        }
+        Request::StopDaemon => {
+            STOP.store(true, Ordering::SeqCst);
+            Response::ok_json("{}".to_string())
+        }
     }
 }
 
@@ -228,6 +277,10 @@ fn ensure_agent(session_id: u32) {
             *guard = None;
         }
     }
+    // 用户主动退出过：不再拉起（见 `standdown`）
+    if STANDDOWN.load(Ordering::SeqCst) {
+        return;
+    }
     unsafe {
         let mut token = HANDLE::default();
         if WTSQueryUserToken(session_id, &mut token).is_err() {
@@ -246,8 +299,8 @@ fn ensure_agent(session_id: u32) {
             }
             return; // agent 未随包部署
         };
-        let mut command = crate::pipe::encode_wide(&format!("\"{}\"", exe_path.display()));
-        let mut desktop = crate::pipe::encode_wide("winsta0\\default");
+        let mut command = encode_wide(&format!("\"{}\"", exe_path.display()));
+        let mut desktop = encode_wide("winsta0\\default");
         let startup = windows::Win32::System::Threading::STARTUPINFOW {
             cb: std::mem::size_of::<windows::Win32::System::Threading::STARTUPINFOW>() as u32,
             lpDesktop: windows::core::PWSTR(desktop.as_mut_ptr()),
@@ -304,12 +357,12 @@ fn terminate_agent() {
 /// 安装服务（AUTO_START；需管理员）。
 pub fn install() -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| format!("定位自身失败：{e}"))?;
-    let bin = crate::pipe::encode_wide(&format!("\"{}\" run", exe.display()));
+    let bin = encode_wide(&format!("\"{}\" run", exe.display()));
     unsafe {
         let scm = OpenSCManagerW(None, None, SC_MANAGER_CREATE_SERVICE)
             .map_err(|e| format!("打开 SCM 失败（需要管理员权限）：{e}"))?;
-        let name = crate::pipe::encode_wide(SERVICE_NAME);
-        let display = crate::pipe::encode_wide(SERVICE_DISPLAY);
+        let name = encode_wide(SERVICE_NAME);
+        let display = encode_wide(SERVICE_DISPLAY);
         let service = CreateServiceW(
             scm,
             PCWSTR(name.as_ptr()),
@@ -339,7 +392,7 @@ pub fn install() -> Result<(), String> {
             code => format!("创建服务失败：{code}"),
         })?;
         // 描述
-        let desc = crate::pipe::encode_wide(SERVICE_DESC);
+        let desc = encode_wide(SERVICE_DESC);
         let mut desc_union = SERVICE_DESCRIPTIONW {
             lpDescription: windows::core::PWSTR(desc.as_ptr() as *mut u16),
         };
@@ -361,7 +414,7 @@ pub fn uninstall() -> Result<(), String> {
     unsafe {
         let scm = OpenSCManagerW(None, None, SC_MANAGER_ALL_ACCESS)
             .map_err(|e| format!("打开 SCM 失败（需要管理员权限）：{e}"))?;
-        let name = crate::pipe::encode_wide(SERVICE_NAME);
+        let name = encode_wide(SERVICE_NAME);
         let service = OpenServiceW(
             scm,
             PCWSTR(name.as_ptr()),
@@ -396,7 +449,7 @@ pub fn control(start: bool) -> Result<(), String> {
     unsafe {
         let scm = OpenSCManagerW(None, None, SC_MANAGER_ALL_ACCESS)
             .map_err(|e| format!("打开 SCM 失败（需要管理员权限）：{e}"))?;
-        let name = crate::pipe::encode_wide(SERVICE_NAME);
+        let name = encode_wide(SERVICE_NAME);
         let opened = OpenServiceW(
             scm,
             PCWSTR(name.as_ptr()),
@@ -424,7 +477,7 @@ pub fn setup() -> Result<(), String> {
     }
     // 就绪探测：管道可达即成功（最长 ~5s）
     for _ in 0..10 {
-        if crate::pipe::call(r#"{"op":"ping"}"#).is_ok() {
+        if rc_appcore::daemon_ipc::call(r#"{"op":"ping"}"#, 3_000).is_ok() {
             return Ok(());
         }
         std::thread::sleep(std::time::Duration::from_millis(500));
@@ -442,7 +495,7 @@ pub fn status() -> Result<(), String> {
     unsafe {
         let scm = OpenSCManagerW(None, None, SERVICE_QUERY_STATUS);
         if let Ok(scm) = scm {
-            let name = crate::pipe::encode_wide(SERVICE_NAME);
+            let name = encode_wide(SERVICE_NAME);
             let service = OpenServiceW(scm, PCWSTR(name.as_ptr()), SERVICE_QUERY_STATUS);
             let _ = CloseServiceHandle(scm);
             if let Ok(service) = service {
@@ -463,7 +516,7 @@ pub fn status() -> Result<(), String> {
             }
         }
     }
-    match crate::pipe::call(r#"{"op":"ping"}"#) {
+    match rc_appcore::daemon_ipc::call(r#"{"op":"ping"}"#, 3_000) {
         Ok(reply) => println!("管道探测成功：{reply}"),
         Err(err) => println!("服务未运行：{err}"),
     }

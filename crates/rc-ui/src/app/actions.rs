@@ -89,7 +89,7 @@ pub(crate) enum Event {
     SessionLaunched(Box<SessionLaunchOutcome>, String, String),
     SessionPointer(SessionPointerEvent),
     SessionKey(SessionKeyEvent),
-    HostStarted(std::result::Result<rc_client_core::host_bridge::HostHandle, String>),
+    HostStarted(std::result::Result<rc_appcore::host::StartedHost, String>),
     AutoStartFinished(std::result::Result<bool, String>),
     UpdateCheckFinished(std::result::Result<String, String>),
     /// 启动时的后台检查：只在有新版本时发出，仅更新文案、不改 busy 状态。

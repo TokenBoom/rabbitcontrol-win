@@ -7,10 +7,12 @@
 //! - 职责仅限需要提权或跨会话的操作：UAC 安全桌面/锁屏下的输入
 //!   注入代理（`inject` 操作，LocalSystem 令牌穿透 UIPI）、显示模式
 //!   切换（后续批次）、agent
-//!   （rabbitcontrol-win）进程监管——活动控制台会话出现时以用户令牌
-//!   拉起 agent，注销时终止；
+//!   （rc-host-agent）进程监管——活动控制台会话出现时以用户令牌
+//!   拉起 agent，注销时终止；用户从托盘退出后不再拉起（`standdown` /
+//!   `resume`）；
 //! - 与管理端经命名管道 `\\.\pipe\rabbitcontrol-daemon` 通信
-//!   （行分隔 JSON，见 [`protocol`]；默认 DACL 仅 SYSTEM/管理员可连）；
+//!   （行分隔 JSON，见 [`protocol`]）；管道只放行本机交互登录的用户、
+//!   SYSTEM 与管理员，特权操作逐条核对调用方身份（见 [`security`]）；
 //! - 实际的采集/编解码/渲染全部发生在用户会话的 agent 内，
 //!   Session 0 摸不到用户桌面，本服务不碰媒体链路。
 //!
@@ -27,8 +29,8 @@
 
 mod firewall;
 mod inject;
-mod pipe;
 mod protocol;
+mod security;
 mod service;
 
 fn main() {
@@ -46,7 +48,7 @@ fn main() {
         Some("status") => report(service::status()),
         Some("setup") => report(service::setup()),
         Some("teardown") => report(service::teardown()),
-        Some("ping") => match pipe::call(r#"{"op":"ping"}"#) {
+        Some("ping") => match rc_appcore::daemon_ipc::call(r#"{"op":"ping"}"#, 3_000) {
             Ok(reply) => println!("pong：{reply}"),
             Err(err) => {
                 println!("ping 失败：{err}");

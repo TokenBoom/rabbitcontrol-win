@@ -14,13 +14,15 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $repoRoot
 try {
     Write-Host "==> cargo build --locked --release"
-    cargo build --locked --release -p rc-ui -p rc-daemon
+    cargo build --locked --release -p rc-ui -p rc-daemon -p rc-host-win
     if ($LASTEXITCODE -ne 0) { throw "release 构建失败" }
 
     $exe = Join-Path $repoRoot "target\release\rabbitcontrol-win.exe"
     $daemon = Join-Path $repoRoot "target\release\rc-daemon.exe"
+    $agent = Join-Path $repoRoot "target\release\rc-host-agent.exe"
     if (-not (Test-Path $exe)) { throw "未找到产物 $exe" }
     if (-not (Test-Path $daemon)) { throw "未找到产物 $daemon（开机自启服务）" }
+    if (-not (Test-Path $agent)) { throw "未找到产物 $agent（后台被控进程）" }
 
     $version = (& $exe --version 2>$null) -replace '^\S+\s+', ''
     if ([string]::IsNullOrWhiteSpace($version)) { $version = "0.1.0" }
@@ -28,8 +30,10 @@ try {
     if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
     New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
+    # 三个可执行文件必须放在同一目录：主界面按自身位置找后台进程，守护服务同理
     Copy-Item $exe $stage
     Copy-Item $daemon $stage
+    Copy-Item $agent $stage
     foreach ($doc in @("README.md", "LICENSE")) {
         $src = Join-Path $repoRoot $doc
         if (Test-Path $src) { Copy-Item $src $stage }

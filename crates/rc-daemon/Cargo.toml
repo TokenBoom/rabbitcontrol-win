@@ -11,6 +11,7 @@ name = "rc-daemon"
 path = "src/main.rs"
 
 [dependencies]
+rc-appcore = { path = "../rc-appcore" }
 rc-input.workspace = true
 rc-input-win = { path = "../rc-input-win" }
 rc-platform-win = { path = "../rc-platform-win" }
@@ -28,4 +29,5 @@ windows = { version = "0.58", features = [
     "Win32_System_Services",
     "Win32_System_Threading",
     "Win32_Security",
+    "Win32_Security_Authorization",
 ] }

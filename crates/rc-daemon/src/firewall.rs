@@ -33,7 +33,11 @@ fn collect_targets() -> Result<Vec<String>, String> {
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
         .ok_or_else(|| "定位守护进程目录失败".to_string())?;
     let mut targets = Vec::new();
-    for name in ["rc-daemon.exe", "rabbitcontrol-win.exe"] {
+    for name in [
+        "rc-daemon.exe",
+        "rc-host-agent.exe",
+        "rabbitcontrol-win.exe",
+    ] {
         let path = exe_dir.join(name);
         if path.exists() {
             targets.push(path.to_string_lossy().into_owned());
@@ -50,7 +54,11 @@ fn collect_targets() -> Result<Vec<String>, String> {
             "debug"
         };
         if let Some(parent) = exe_dir.parent() {
-            for name in ["rc-daemon.exe", "rabbitcontrol-win.exe"] {
+            for name in [
+                "rc-daemon.exe",
+                "rc-host-agent.exe",
+                "rabbitcontrol-win.exe",
+            ] {
                 let path = parent.join(other).join(name);
                 if path.exists() {
                     targets.push(path.to_string_lossy().into_owned());

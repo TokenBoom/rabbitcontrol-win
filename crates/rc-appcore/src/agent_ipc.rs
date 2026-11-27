@@ -4,36 +4,24 @@
 //! DACL 只允许创建它的用户以及 SYSTEM / 管理员读写——也就是只有同一用户的
 //! 进程能下发指令。管道名带会话号：快速用户切换时每个会话各有一条，互不串扰。
 //!
-//! 服务端实现在 `rc-host-win`；这里只有协议类型与客户端调用。
-
-#![allow(unsafe_code)] // 命名管道 FFI 边界
+//! 服务端实现在 `rc-host-win`；这里只有协议类型与客户端调用（收发在 [`crate::named_pipe`]）。
 
 use serde::{Deserialize, Serialize};
-use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
-use windows::Win32::Storage::FileSystem::{
-    CreateFileW, ReadFile, WriteFile, FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_OVERLAPPED,
-    FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_NONE, OPEN_EXISTING,
-};
-use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
-use windows::Win32::System::Threading::{
-    CreateEventW, GetCurrentProcessId, ResetEvent, WaitForSingleObject,
-};
-use windows::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
+
+use crate::named_pipe::current_session_id;
 
 /// 管道名前缀；完整名为此前缀加当前会话号。
 pub const PIPE_PREFIX: &str = r"\\.\pipe\rabbitcontrol-agent-s";
 /// 单帧上限（字节）。
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
+/// 主界面顶层窗口的类名：后台进程据此判断主界面是否在运行（与 `rc-ui` 共用）。
+pub const GUI_WINDOW_CLASS: &str = "RabbitControlWindow";
+/// 后台被控进程的可执行文件名（与主界面、守护服务同目录）。
+pub const AGENT_EXE: &str = "rc-host-agent.exe";
 
 /// 当前会话对应的管道名。
 pub fn pipe_name() -> String {
-    let mut session = 0u32;
-    // 取不到会话号时按 0 处理（仍是一条确定的名字）
-    unsafe {
-        let _ = ProcessIdToSessionId(GetCurrentProcessId(), &mut session);
-    }
-    format!("{PIPE_PREFIX}{session}")
+    format!("{PIPE_PREFIX}{}", current_session_id())
 }
 
 /// 主界面（或其他本机进程）发给后台被控进程的请求。
@@ -44,13 +32,12 @@ pub enum Request {
     Ping,
     /// 查询后台被控进程完整快照。
     Snapshot,
-    /// 主界面已启动（携带主界面进程 PID）：后台让位，由主界面托管信令与被控。
+    /// 主界面已启动（携带主界面进程 PID）：后台让位，由主界面托管信令与被控；
+    /// 后台盯着这个进程，它退出后自动接管。
     GuiOnline {
-        /// 主界面进程 ID；后台据此监视其退出并接管。
+        /// 主界面进程 ID。
         pid: u32,
     },
-    /// 主界面即将退出：提示后台准备接管（以进程真正退出为准）。
-    GuiOffline,
     /// 开关「允许被控」。
     SetHostEnabled {
         /// 是否允许本机被控。
@@ -162,112 +149,17 @@ pub fn call(request: &Request, timeout_ms: u32) -> Result<Response, String> {
 /// 向指定管道名发送一次请求（[`call`] 的底层形式；测试与诊断用）。
 pub fn call_pipe(pipe: &str, request: &Request, timeout_ms: u32) -> Result<Response, String> {
     let frame = serde_json::to_string(request).map_err(|e| format!("请求编码失败：{e}"))?;
-    let reply = raw_call(pipe, &frame, timeout_ms)?;
+    let reply = crate::named_pipe::round_trip(pipe, &frame, MAX_FRAME_BYTES, timeout_ms).map_err(
+        |err| match err {
+            crate::named_pipe::PipeError::NotFound => NOT_RUNNING.to_string(),
+            other => other.to_string(),
+        },
+    )?;
     serde_json::from_str(&reply).map_err(|e| format!("后台响应无法解析：{e}"))
 }
 
-/// RAII 关闭内核句柄。
-struct OwnedHandle(HANDLE);
-
-impl Drop for OwnedHandle {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = CloseHandle(self.0);
-        }
-    }
-}
-
-/// UTF-16 编码（含 NUL 终止）。
-fn encode_wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
-}
-
-/// 一次 overlapped I/O：立即完成则直接返回，否则等到事件触发；超时则取消。
-fn run_io(
-    handle: &OwnedHandle,
-    event: &OwnedHandle,
-    timeout_ms: u32,
-    what: &str,
-    io: impl FnOnce(*mut OVERLAPPED) -> windows::core::Result<()>,
-) -> Result<u32, String> {
-    unsafe {
-        let _ = ResetEvent(event.0);
-    }
-    let mut overlapped = OVERLAPPED {
-        hEvent: event.0,
-        ..Default::default()
-    };
-    let pending = match io(&mut overlapped) {
-        Ok(()) => false,
-        // ERROR_IO_PENDING(997)：已提交，等待事件
-        Err(err) if err.code() == windows::Win32::Foundation::ERROR_IO_PENDING.to_hresult() => true,
-        Err(err) => return Err(format!("{what}失败：{err}")),
-    };
-    if pending {
-        let wait = unsafe { WaitForSingleObject(event.0, timeout_ms) };
-        if wait != WAIT_OBJECT_0 {
-            // 取消后必须等到操作真正结束，缓冲区才能释放
-            unsafe {
-                let _ = CancelIoEx(handle.0, None);
-                let mut leftover = 0u32;
-                let _ = GetOverlappedResult(handle.0, &overlapped, &mut leftover, true);
-            }
-            return Err(format!("{what}超时"));
-        }
-    }
-    let mut transferred = 0u32;
-    unsafe {
-        GetOverlappedResult(handle.0, &overlapped, &mut transferred, false)
-            .map_err(|err| format!("{what}失败：{err}"))?;
-    }
-    Ok(transferred)
-}
-
-/// 打开管道 → 写一帧 → 读一帧 → 关闭。
-fn raw_call(pipe: &str, frame: &str, timeout_ms: u32) -> Result<String, String> {
-    let name = encode_wide(pipe);
-    let handle = unsafe {
-        CreateFileW(
-            PCWSTR(name.as_ptr()),
-            FILE_GENERIC_READ.0 | FILE_GENERIC_WRITE.0,
-            FILE_SHARE_NONE,
-            None,
-            OPEN_EXISTING,
-            FILE_FLAG_OVERLAPPED as FILE_FLAGS_AND_ATTRIBUTES,
-            None,
-        )
-    }
-    .map_err(|err| {
-        if err.code() == windows::Win32::Foundation::ERROR_FILE_NOT_FOUND.to_hresult() {
-            "后台被控进程未运行".to_string()
-        } else {
-            format!("连接后台被控进程失败：{err}")
-        }
-    })?;
-    let handle = OwnedHandle(handle);
-    let event = OwnedHandle(
-        unsafe { CreateEventW(None, true, false, None) }
-            .map_err(|err| format!("创建事件失败：{err}"))?,
-    );
-
-    let mut data = frame.as_bytes().to_vec();
-    data.push(b'\n');
-    run_io(&handle, &event, timeout_ms, "发送请求", |ov| unsafe {
-        let mut written = 0u32;
-        WriteFile(handle.0, Some(&data), Some(&mut written), Some(ov))
-    })?;
-
-    let mut buf = [0u8; MAX_FRAME_BYTES];
-    let read = run_io(&handle, &event, timeout_ms, "读取响应", |ov| unsafe {
-        let mut got = 0u32;
-        ReadFile(handle.0, Some(&mut buf), Some(&mut got), Some(ov))
-    })?;
-    if read as usize > MAX_FRAME_BYTES {
-        return Err("后台响应过长".to_string());
-    }
-    let text = String::from_utf8_lossy(&buf[..read as usize]).into_owned();
-    Ok(text.trim_end_matches(['\n', '\r']).to_string())
-}
+/// 对端没在运行时的提示（主界面据此决定要不要拉起后台进程）。
+const NOT_RUNNING: &str = "后台被控进程未运行";
 
 #[cfg(test)]
 mod tests {
@@ -283,7 +175,6 @@ mod tests {
                 Request::GuiOnline { pid: 4242 },
                 r#"{"op":"gui-online","pid":4242}"#,
             ),
-            (Request::GuiOffline, r#"{"op":"gui-offline"}"#),
             (
                 Request::SetHostEnabled { enabled: true },
                 r#"{"op":"set-host-enabled","enabled":true}"#,

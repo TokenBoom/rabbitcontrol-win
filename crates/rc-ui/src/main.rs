@@ -7,6 +7,7 @@ mod media;
 mod ui;
 
 use std::error::Error;
+use std::os::windows::process::CommandExt;
 
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowW, MessageBoxW, SetForegroundWindow, ShowWindow, MB_ICONERROR, SW_RESTORE,
@@ -14,8 +15,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use windows::core::{HSTRING, PCWSTR};
 
-/// 主窗口类名（二次启动时用于唤起已有实例）。
-const WINDOW_CLASS: &str = "RabbitControlWindow";
+use rc_appcore::agent_ipc::{self, GUI_WINDOW_CLASS as WINDOW_CLASS};
+
+/// 与后台被控进程握手的超时（它可能正在收尾一个远端会话）。
+const AGENT_HANDSHAKE_MS: u32 = 5_000;
 
 /// 进程级单实例守卫：已存在实例时唤起其窗口并返回 false。
 fn acquire_single_instance() -> bool {
@@ -32,10 +35,53 @@ fn acquire_single_instance() -> bool {
     true
 }
 
+/// 与后台被控进程（`rc-host-agent`）交接。
+///
+/// 同一设备只能有一条信令连接：主界面打开期间由主界面托管信令与被控，后台进程
+/// 让位；主界面退出后它再接管（见 `rc-appcore::signal_runtime` 的说明）。所以
+/// 启动时先让它让位；它没在运行就拉起一个（带上本进程 PID，它据此等待）。
+/// 同时请守护服务恢复「登录时拉起后台进程」——用户上次可能是从托盘主动退出的。
+fn handshake_with_agent() {
+    let pid = std::process::id();
+    let yielded = agent_ipc::call(&agent_ipc::Request::GuiOnline { pid }, AGENT_HANDSHAKE_MS)
+        .is_ok_and(|response| response.ok);
+    if !yielded {
+        spawn_agent(pid);
+    }
+    let _ = rc_appcore::daemon_ipc::resume();
+}
+
+/// 拉起后台被控进程（独立于本进程的生存期）。
+fn spawn_agent(gui_pid: u32) {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let Some(dir) = exe.parent() else {
+        return;
+    };
+    let agent = dir.join(agent_ipc::AGENT_EXE);
+    // 旧版打包里没有后台进程：主界面照常独立运行
+    if !agent.exists() {
+        return;
+    }
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    let mut command = std::process::Command::new(&agent);
+    command
+        .arg("--gui-pid")
+        .arg(gui_pid.to_string())
+        .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    if let Err(err) = command.spawn() {
+        eprintln!("[agent] 拉起后台被控进程失败：{err}");
+    }
+}
+
 fn run() -> Result<(), Box<dyn Error>> {
     if !acquire_single_instance() {
         return Ok(());
     }
+    // 必须先于登录恢复与信令连接：否则主界面会与后台进程互踢信令
+    handshake_with_agent();
     rc_platform_win::register_all();
     let shell = ui::shell::Shell::new()?;
     let mut app = app::App::new(&shell)?;

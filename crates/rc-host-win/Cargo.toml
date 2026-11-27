@@ -1,18 +1,37 @@
 [package]
 name = "rc-host-win"
-description = "RabbitControl Windows host tray and approval UI"
+description = "RabbitControl Windows background host agent (tray, approval prompt, controlled-side service)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish = false
+
+[[bin]]
+name = "rc-host-agent"
+path = "src/main.rs"
+
+[build-dependencies]
+# exe 资源嵌入（图标 + 清单）：托盘图标与高 DPI 显示依赖它
+embed-resource = "2.5"
 
 [dependencies]
-rc-types.workspace = true
-serde.workspace = true
+rc-appcore = { path = "../rc-appcore" }
+rc-platform-win = { path = "../rc-platform-win" }
+rc-client-core.workspace = true
+rc-session.workspace = true
 rc-win32core = { path = "../rc-win32core" }
+serde_json.workspace = true
 windows = { version = "0.58", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_System_IO",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
-    "Win32_System_LibraryLoader",
 ] }

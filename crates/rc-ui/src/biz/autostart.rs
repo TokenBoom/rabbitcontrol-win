@@ -4,7 +4,7 @@
 //! 阻塞等待其退出（≤30s），随后管道 Ping 确认服务就绪。全部纯阻塞函数，
 //! 调用方须在工作线程执行。
 
-#![allow(unsafe_code)] // ShellExecuteExW / 命名管道探测 FFI
+#![allow(unsafe_code)] // ShellExecuteExW FFI
 
 use std::time::Duration;
 
@@ -17,54 +17,17 @@ use windows58::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 /// 同目录守护可执行名。
 const DAEMON_EXE: &str = "rc-daemon.exe";
 
-/// 守护服务是否在线（管道 Ping；~300ms 超时语义由系统管道超时决定）。
+/// 探测守护服务的超时：服务卡住时不能拖慢界面。
+const PROBE_TIMEOUT_MS: u32 = 1_500;
+
+/// 守护服务是否在线（管道 Ping，带超时）。
 pub fn daemon_reachable() -> bool {
     daemon_query(r#"{"op":"ping"}"#).is_some()
 }
 
 /// 守护服务查询（返回响应 JSON 文本）。
 pub fn daemon_query(frame: &str) -> Option<String> {
-    let name = wide(r"\\.\pipe\rabbitcontrol-daemon");
-    unsafe {
-        let handle: HANDLE = windows58::Win32::Storage::FileSystem::CreateFileW(
-            PCWSTR(name.as_ptr()),
-            (windows58::Win32::Storage::FileSystem::FILE_GENERIC_READ
-                | windows58::Win32::Storage::FileSystem::FILE_GENERIC_WRITE)
-                .0,
-            windows58::Win32::Storage::FileSystem::FILE_SHARE_NONE,
-            None,
-            windows58::Win32::Storage::FileSystem::OPEN_EXISTING,
-            windows58::Win32::Storage::FileSystem::FILE_ATTRIBUTE_NORMAL,
-            None,
-        )
-        .ok()?;
-        let mut data = frame.as_bytes().to_vec();
-        data.push(b'\n');
-        let mut written = 0u32;
-        let write = windows58::Win32::Storage::FileSystem::WriteFile(
-            handle,
-            Some(&data),
-            Some(&mut written),
-            None,
-        );
-        if write.is_err() {
-            let _ = CloseHandle(handle);
-            return None;
-        }
-        let mut buf = [0u8; 4096];
-        let mut read = 0u32;
-        let read_ok = windows58::Win32::Storage::FileSystem::ReadFile(
-            handle,
-            Some(&mut buf),
-            Some(&mut read),
-            None,
-        );
-        let _ = CloseHandle(handle);
-        if read_ok.is_err() {
-            return None;
-        }
-        Some(String::from_utf8_lossy(&buf[..read as usize]).into_owned())
-    }
+    rc_appcore::daemon_ipc::call(frame, PROBE_TIMEOUT_MS).ok()
 }
 
 /// 开关被控自启服务：`on=true` 安装并启动，`false` 停止并卸载。

@@ -878,11 +878,13 @@ impl App {
                 Event::HostStarted(result) => {
                     self.set_busy(false)?;
                     match result {
-                        Ok(handle) => {
-                            self.host_rt.handle = Some(handle);
+                        Ok(started) => {
+                            self.host_rt.install(started);
                             self.label("HostError", "")?;
                         }
                         Err(err) => {
+                            // 没起来就不能让开关显示为「开」：状态与落盘保持一致
+                            persist_host_enabled(false);
                             let _ = self.set_checked_named("HostSwitch", false);
                             self.label("HostError", &format!("启动失败：{err}"))?;
                         }
@@ -979,7 +981,10 @@ impl App {
     }
 
     /// M5：被控开关（后台线程启动，避免阻塞 UI）。
+    ///
+    /// 开关状态落盘：主界面关掉后，后台被控进程按同一状态接管；重启后也保持。
     fn on_host_toggle(&mut self, on: bool) -> Result<()> {
+        persist_host_enabled(on);
         if !on {
             self.host_rt.stop();
             self.set_visible("HostCodeBadge", false)?;
@@ -992,6 +997,18 @@ impl App {
             .and_then(|b| b.Password().ok())
             .map(|s| s.to_string())
             .filter(|p| !p.is_empty());
+        // 自定义访问密码落盘（留空 = 回到临时码）：后台被控进程接管时沿用同一个
+        let patch = match &password {
+            Some(custom) => rc_client_core::app_prefs::SecurityPrefsPatch {
+                custom_host_password: Some(custom.clone()),
+                ..Default::default()
+            },
+            None => rc_client_core::app_prefs::SecurityPrefsPatch {
+                clear_custom_host_password: Some(true),
+                ..Default::default()
+            },
+        };
+        self.save_prefs_patch(move |prefs| prefs.apply_security_patch(patch))?;
         let manager = self.auth.manager();
         let events = self.sender();
         let allow_file_transfer = self.allow_file_transfer;
@@ -1587,6 +1604,14 @@ pub(crate) fn set_checked(toggle: &ToggleButton, on: bool) -> Result<()> {
     let value = windows::Foundation::PropertyValue::CreateBoolean(on)?;
     let reference: windows::Foundation::IReference<bool> = value.cast()?;
     toggle.SetIsChecked(&reference)
+}
+
+/// 「允许被控」开关落盘：后台被控进程与主界面共用这一份状态。
+fn persist_host_enabled(on: bool) {
+    let state = rc_appcore::agent_state::AgentState { host_enabled: on };
+    if let Err(err) = state.save() {
+        eprintln!("[host] 保存被控开关失败：{err}");
+    }
 }
 
 fn panel_children(panel: &StackPanel) -> Result<windows::UI::Xaml::Controls::UIElementCollection> {

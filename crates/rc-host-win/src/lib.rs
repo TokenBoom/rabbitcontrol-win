@@ -1,42 +1,37 @@
-//! RabbitControl Windows 被控端用户会话代理。
+//! RabbitControl Windows 后台被控进程（`rc-host-agent`）。
 //!
-//! # 为什么需要它
+//! # 职责
 //!
-//! Windows 服务运行在 Session 0，看不到也摸不到用户桌面：采集
-//! （DXGI duplication 作用于用户会话的显示器）、输入注入（UIPI）、
-//! 托盘交互都必须发生在登录用户的会话内。因此被控端是双进程：
+//! 登录用户的会话内常驻、没有主窗口的后台被控服务：信令连接、被控服务、
+//! 托盘菜单、独立的审批小窗，以及与主界面 / 守护服务的本机进程通信。
+//! 主界面关掉以后，这台电脑仍然可以被发现和控制。
 //!
-//! - **本 crate（agent）**：登录会话内驻留，托盘图标
-//!   （`Shell_NotifyIconW` + [`rc_win32core::MessageWindow`] 消息泵）、
-//!   连接审批对话框、实际的采集/注入/渲染执行者；
-//! - **rc-daemon（服务）**：LocalSystem 权限，处理 UAC 安全桌面/
-//!   锁屏场景的输入注入、显示模式切换提权操作、agent 进程监管
-//!   （崩溃重启、登录会话变化时在新会话拉起 agent）。
+//! # 三个进程的分工（对齐 macOS 的 `rc-ui` / `rc-host-agent` / `rc-daemon`）
 //!
-//! 两者经命名管道 `\.\pipe\rabbitcontrol-win` 通信。
+//! - `rabbitcontrol-win.exe`（主界面）：控制端；主界面打开期间由它托管信令与被控；
+//! - `rc-host-agent.exe`（本 crate）：主界面没开时接管信令与被控。同一设备只能有
+//!   一条信令连接，所以两者是「让位 / 接管」关系，见 [`engine`]；
+//! - `rc-daemon.exe`（守护服务，LocalSystem）：登录时把本进程拉进用户会话，
+//!   以及高权限操作（UAC / 锁屏注入代理）。
 //!
-//! # 当前状态
+//! # 模块
 //!
-//! 骨架占位。
+//! - [`engine`]：状态机与后台服务编排，不含界面，可单测；
+//! - [`tray`]：托盘图标与菜单；
+//! - [`approval_window`]：独立的连接审批小窗；
+//! - [`ipc_server`]：响应主界面 / 诊断工具的本机管道请求；
+//! - [`gui_probe`]：主界面是否在运行的探测、从托盘打开主界面；
+//! - [`app`]：把以上接到一个 Win32 消息循环里；
+//! - [`diag`]：诊断日志；[`win`]：Win32 小工具。
 
 #![deny(missing_docs)]
-#![allow(unsafe_code)] // Shell_NotifyIconW FFI（托盘）
+#![allow(unsafe_code)] // 托盘 / 窗口 / 进程 FFI 边界
 
-pub mod state;
+pub mod app;
+pub mod approval_window;
+pub mod diag;
+pub mod engine;
+pub mod gui_probe;
+pub mod ipc_server;
 pub mod tray;
-
-/// 托盘应用（骨架占位）。
-#[derive(Default)]
-pub struct TrayApp;
-
-impl TrayApp {
-    /// 创建托盘应用。
-    pub fn new() -> Self {
-        TrayApp
-    }
-
-    /// 进入消息循环（阻塞）。
-    pub fn run(&mut self) {
-        // TODO: 注册托盘图标 + Win32 消息循环。
-    }
-}
+pub mod win;
