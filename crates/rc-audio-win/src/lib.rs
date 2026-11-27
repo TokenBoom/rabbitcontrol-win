@@ -22,6 +22,7 @@
 use std::sync::Arc;
 
 use rc_audio::{AudioBackendProvider, AudioCapture, AudioPlayer, PcmFrame};
+mod capture;
 use windows::Win32::Media::Audio::{
     eConsole, eRender, IAudioClient, IAudioRenderClient, IMMDeviceEnumerator, MMDeviceEnumerator,
     AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
@@ -29,28 +30,6 @@ use windows::Win32::Media::Audio::{
 };
 use windows::Win32::Media::Multimedia::WAVE_FORMAT_IEEE_FLOAT;
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
-
-/// WASAPI 环回采集（骨架占位；M5 被控端实装）。
-pub struct WasapiLoopbackCapture {
-    sample_rate: u32,
-    channels: u8,
-}
-
-impl AudioCapture for WasapiLoopbackCapture {
-    fn try_recv_frame(&mut self) -> Option<PcmFrame> {
-        None
-    }
-
-    fn sample_rate(&self) -> u32 {
-        self.sample_rate
-    }
-
-    fn channels(&self) -> u8 {
-        self.channels
-    }
-
-    fn stop(&mut self) {}
-}
 
 /// WASAPI 共享模式播放器（push 驱动泵送，无独立泵线程）。
 ///
@@ -162,7 +141,7 @@ impl WasapiPlayer {
 unsafe fn probe_mix_format(fmt: *const WAVEFORMATEX) -> (u32, u16, bool) {
     let f = unsafe { &*fmt };
     let float = f.wFormatTag == WAVE_FORMAT_IEEE_FLOAT as u16
-        || (f.wFormatTag == (WAVE_FORMAT_EXTENSIBLE_VAL as u16) && f.wBitsPerSample == 32);
+        || (f.wFormatTag == WAVE_FORMAT_EXTENSIBLE_VAL as u16 && f.wBitsPerSample == 32);
     (f.nSamplesPerSec, f.nChannels, float)
 }
 
@@ -280,8 +259,7 @@ struct WasapiProvider;
 
 impl AudioBackendProvider for WasapiProvider {
     fn create_system_audio_capture(&self) -> std::result::Result<Box<dyn AudioCapture>, String> {
-        // M5 被控端：IMMDeviceEnumerator → 默认渲染端点 → loopback 初始化。
-        Err("wasapi loopback capture not yet implemented".into())
+        capture::LoopbackCapture::new().map(|c| Box::new(c) as Box<dyn AudioCapture>)
     }
 
     fn create_audio_player(
