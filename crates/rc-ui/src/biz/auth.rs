@@ -111,60 +111,57 @@ pub fn local_hostname() -> String {
 
 /// 将认证客户端错误映射为适合界面展示的中文提示。
 ///
-/// v0.2.2 UiError 统一：可映射为规范错误码的走 core
-/// `resolve_ui_error`（4 级严重度 + 恢复建议 + 平台文案），其余保留
-/// 原有中文映射（core 目录未覆盖的网络/TLS 本地错误）。
+/// 能对上 core 错误目录（`ui_error`）的走目录文案（标题 + 恢复建议，全平台
+/// 一致）；目录没有覆盖的保留本地的中文映射——限流（429）目录里就没有条目，
+/// 不能硬套一个不存在的码（会落到「发生未知错误」）。
 pub fn format_auth_error(err: AuthClientError) -> String {
     use rc_client_core::ui_error;
     let platform = ui_error::current_platform();
+    // 目录文案：标题 +（恢复建议）
+    let catalog = |code: &str, status: Option<u16>| {
+        super::ui_error_text(&ui_error::resolve_ui_error(
+            code,
+            platform,
+            &[],
+            status,
+            None,
+        ))
+    };
     match &err {
-        // 服务端 API 错误：按 code/status 走 core 目录
         AuthClientError::Api {
             status,
             code,
             message,
         } => {
-            let canonical = match (status, code.as_str()) {
-                (401, _) => Some("auth.invalid_credentials"),
-                (403, "password_change_required") => Some("auth.password_change_required"),
-                (403, _) => Some("auth.forbidden"),
-                (429, _) => Some("auth.rate_limited"),
-                _ => None,
-            };
-            if let Some(code_name) = canonical {
-                let ui = ui_error::resolve_ui_error(code_name, platform, &[], Some(*status), None);
-                return format!("{}{}", ui.title, {
-                    let mut s = String::new();
-                    if !ui.suggestion.is_empty() {
-                        s.push_str(&format!("（{}）", ui.suggestion));
+            let trimmed = message.trim();
+            match (status, code.as_str()) {
+                (401, _) => catalog("auth.invalid_credentials", Some(*status)),
+                (403, "password_change_required") => {
+                    catalog("auth.password_change_required", Some(*status))
+                }
+                (403, _) => {
+                    // 账号停用等具体原因由服务端 message 给出，保留在文案里
+                    let mut text = catalog("auth.forbidden", Some(*status));
+                    if !trimmed.is_empty() {
+                        text.push_str(&format!(" 服务端说明：{trimmed}"));
                     }
-                    s
-                });
-            }
-            // 未知 API 错误：保留服务端 message（已是中文或有语义）
-            if !message.trim().is_empty() {
-                message.clone()
-            } else {
-                format!("请求失败（{code}）。")
+                    text
+                }
+                (429, _) => "登录尝试过于频繁，请稍后再试。".to_string(),
+                _ if !trimmed.is_empty() => trimmed.to_string(),
+                _ => format!("请求失败（{code}）。"),
             }
         }
-        // ReloginRequired：会话过期类
         AuthClientError::ReloginRequired(msg) => {
-            let ui = ui_error::classify_signal_error(msg, platform);
-            format!("{}（{}）", ui.title, ui.suggestion)
+            let lower = msg.to_ascii_lowercase();
+            let code = if lower.contains("reuse") || msg.contains("重放") {
+                "auth.token_reuse_detected"
+            } else {
+                "auth.relogin_required"
+            };
+            catalog(code, None)
         }
-        // 本地错误（网络/TLS/配置）：core 目录未覆盖，保留原中文映射
-        _ => format_legacy_auth_error(&err),
-    }
-}
-
-/// 旧版本地错误中文映射（网络/TLS/配置等 core 目录未覆盖的场景）。
-fn format_legacy_auth_error(err: &AuthClientError) -> String {
-    match err {
-        AuthClientError::Network(msg) => format!("网络连接失败：{msg}"),
-        AuthClientError::Tls(msg) => format!("证书校验失败：{msg}"),
-        AuthClientError::Config(msg) => format!("配置错误：{msg}"),
-        AuthClientError::Protocol(msg) => format!("协议错误：{msg}"),
+        // 网络 / TLS / 配置 / 协议等本地错误：沿用错误自身的描述
         other => other.to_string(),
     }
 }
@@ -383,43 +380,52 @@ mod tests {
 
     #[test]
     fn maps_auth_errors_to_chinese_messages() {
-        // 401：core 目录文案（含恢复建议）
-        let e401 = format_auth_error(AuthClientError::Api {
-            status: 401,
-            code: "unauthorized".to_string(),
-            message: String::new(),
-        });
-        assert!(e401.contains("账号或密码错误"), "401 文案: {e401}");
-        assert!(e401.contains("重试"), "401 应含恢复建议: {e401}");
-        // 403 password_change_required：core 目录文案
-        let e403 = format_auth_error(AuthClientError::Api {
-            status: 403,
-            code: "password_change_required".to_string(),
-            message: "must change".to_string(),
-        });
-        assert!(!e403.is_empty(), "403 文案不应为空");
-        // 429：core 目录文案
-        let e429 = format_auth_error(AuthClientError::Api {
-            status: 429,
-            code: "rate_limited".to_string(),
-            message: String::new(),
-        });
-        assert!(!e429.is_empty(), "429 文案不应为空");
-        // ReloginRequired：标题 + 建议
-        let erelogin = format_auth_error(AuthClientError::ReloginRequired(String::new()));
-        assert!(!erelogin.is_empty(), "relogin 文案不应为空");
-        // 未知 API 错误保留服务端 message
+        let api = |status: u16, code: &str, message: &str| AuthClientError::Api {
+            status,
+            code: code.to_string(),
+            message: message.to_string(),
+        };
+        // core 错误目录文案（标题 + 恢复建议）
         assert_eq!(
-            format_auth_error(AuthClientError::Api {
-                status: 500,
-                code: "internal".to_string(),
-                message: "服务器内部错误".to_string(),
-            }),
+            format_auth_error(api(401, "unauthorized", "")),
+            "账号或密码错误（请核对邮箱地址与密码（注意大小写）后重试；若忘记密码请联系管理员重置。）"
+        );
+        assert_eq!(
+            format_auth_error(api(403, "password_change_required", "must change")),
+            "请先修改初始密码（请立即设置新密码（8–128 字节），修改完成后将自动解锁全部功能。）"
+        );
+        // 403 其他原因：目录标题 + 服务端说明
+        assert_eq!(
+            format_auth_error(api(403, "device_disabled", "设备已被管理员停用")),
+            "无权执行此操作（请确认当前账号角色，或联系服务器管理员授予相应权限。） 服务端说明：设备已被管理员停用"
+        );
+        // 目录没有限流条目：保留本地文案，不能落到「未知错误」
+        assert_eq!(
+            format_auth_error(api(429, "rate_limited", "")),
+            "登录尝试过于频繁，请稍后再试。"
+        );
+        // 登录态失效：目录文案（不能被误判成网络不可达）
+        assert_eq!(
+            format_auth_error(AuthClientError::ReloginRequired(String::new())),
+            "需要重新登录（请点击重新登录以恢复远控与设备同步服务。）"
+        );
+        assert_eq!(
+            format_auth_error(AuthClientError::ReloginRequired("token_reuse".into())),
+            "检测到异常令牌重放（请立即重新登录账号，如非本人操作建议尽快修改登录密码。）"
+        );
+        // 其余 API 错误保留服务端 message / 错误码
+        assert_eq!(
+            format_auth_error(api(500, "internal", "服务器内部错误")),
             "服务器内部错误"
         );
-        // 本地错误走 legacy 中文映射
-        assert!(
-            format_auth_error(AuthClientError::Network("timeout".into())).contains("网络连接失败")
+        assert_eq!(
+            format_auth_error(api(502, "bad_gateway", "")),
+            "请求失败（bad_gateway）。"
+        );
+        // 本地错误沿用自身描述
+        assert_eq!(
+            format_auth_error(AuthClientError::Network("timeout".into())),
+            AuthClientError::Network("timeout".into()).to_string()
         );
     }
 

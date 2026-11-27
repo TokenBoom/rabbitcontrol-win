@@ -103,6 +103,8 @@ pub struct App {
     prompt_pending: u8,
     /// M5 被控端运行时。
     host_rt: crate::biz::host::HostRuntime,
+    /// 「允许文件互传」开关的期望值：启动被控服务时生效，运行中可热切换。
+    allow_file_transfer: bool,
     /// 在途审批代次（None = 无弹窗）。
     approval_generation: Option<u64>,
     /// 被控会话起始 tick（Banner 计时）。
@@ -140,6 +142,9 @@ impl App {
         let runtime = Arc::new(SignalRuntime::new(auth.manager()));
         let prefs_path = app_prefs::default_prefs_path();
         let prefs = app_prefs::load_from_path(&prefs_path);
+        // 已保存的出站代理必须先于登录 / 信令 / 更新检查生效
+        rc_client_core::proxy::set_global_proxy_config(prefs.proxy.clone());
+        let allow_file_transfer = prefs.allow_assist_file_transfer;
         let history_store = TargetHistory::load_from(&history::default_history_path());
         let mut app = Self {
             root,
@@ -185,6 +190,7 @@ impl App {
             portmaps: Vec::new(),
             prompt_pending: 0,
             host_rt: crate::biz::host::HostRuntime::new(),
+            allow_file_transfer,
             approval_generation: None,
             host_session_start_tick: 0,
             rename_target: None,
@@ -213,16 +219,15 @@ impl App {
                 events.send(Event::AutoStartFinished(Ok(running)));
             });
         }
-        // M6.3a 启动时后台自动检查更新（失败静默，不打扰用户）
+        // M6.3a 启动时后台自动检查更新：只在有新版本时提示，其余情况静默。
+        // 走独立事件，不经过 UpdateCheckFinished——那个会 set_busy(false)，
+        // 可能提前解禁正在进行的登录 / 恢复会话。
         {
             let events = app.sender();
             thread::spawn(move || {
                 if let Ok(check) = crate::biz::update_check::check() {
                     if check.is_newer {
-                        events.send(Event::UpdateCheckFinished(Ok(format!(
-                            "新版本 {} 可用（设置页可查看详情）",
-                            check.version
-                        ))));
+                        events.send(Event::UpdateAvailable(check.status_text()));
                     }
                 }
             });
@@ -830,6 +835,20 @@ impl App {
                 }
                 Event::SessionPointer(pointer) => self.on_session_pointer(pointer)?,
                 Event::SessionKey(key) => self.on_session_key(key)?,
+                Event::WolFinished(target, result) => {
+                    let name = self
+                        .devices
+                        .iter()
+                        .find(|d| d.device_id == target)
+                        .map(|d| self.device_name_of(d))
+                        .unwrap_or(target);
+                    let text = match result {
+                        Ok(text) => format!("{name}：{text}"),
+                        Err(err) => format!("{name} 唤醒失败：{err}"),
+                    };
+                    self.label("DevicesStatus", &text)?;
+                }
+                Event::UpdateAvailable(text) => self.label("UpdateStatus", &text)?,
                 Event::UpdateCheckFinished(result) => {
                     self.set_busy(false)?;
                     match result {
@@ -974,9 +993,11 @@ impl App {
             .filter(|p| !p.is_empty());
         let manager = self.auth.manager();
         let events = self.sender();
+        let allow_file_transfer = self.allow_file_transfer;
         self.set_busy(true)?;
         thread::spawn(move || {
-            let result = crate::biz::host::HostRuntime::start(&manager, password);
+            let result =
+                crate::biz::host::HostRuntime::start(&manager, password, allow_file_transfer);
             events.send(Event::HostStarted(result));
         });
         Ok(())
@@ -1209,15 +1230,17 @@ impl App {
                 self.set_visible("LoginView", false)?;
                 self.set_visible("ServerSettingsView", true)
             }
-            Action::WolWake(_device_id, mac) => {
-                // #7 WOL：向设备 MAC 发 magic packet（LAN 广播地址）
-                match crate::biz::wol::wake(&mac, &[]) {
-                    Ok(n) => self.label(
-                        "DevicesEmpty",
-                        &format!("唤醒包已发送到 {n} 个地址，等待设备上线…"),
-                    )?,
-                    Err(err) => self.label("DevicesEmpty", &format!("唤醒失败：{err}"))?,
-                }
+            Action::WolWake(target) => {
+                // #7 远程开机：经信令转发（本机没有目标 MAC），阻塞请求放后台线程
+                self.label("DevicesStatus", "正在发送唤醒请求…")?;
+                self.set_visible("DevicesStatus", true)?;
+                let runtime = Arc::clone(&self.runtime);
+                let events = self.sender();
+                let target = target.clone();
+                thread::spawn(move || {
+                    let result = runtime.request_wol(&target, crate::biz::runtime::WOL_TIMEOUT);
+                    events.send(Event::WolFinished(target, result));
+                });
                 Ok(())
             }
             Action::BackToLogin => {
@@ -1322,36 +1345,58 @@ impl App {
             Action::CheckUpdate => {
                 let events = self.sender();
                 self.set_busy(true)?;
+                self.label("UpdateStatus", "正在检查…")?;
                 thread::spawn(move || {
-                    let result = crate::biz::update_check::check().map(|check| {
-                        if check.is_newer {
-                            format!("新版本 {} 可用", check.version)
-                        } else {
-                            format!("已是最新版本 {}", crate::biz::update_check::CURRENT_VERSION)
-                        }
-                    });
+                    let result = crate::biz::update_check::check().map(|check| check.status_text());
                     events.send(Event::UpdateCheckFinished(result));
                 });
                 Ok(())
             }
             Action::ProxyApply => {
-                let url = self
+                let input = self
                     .find_opt::<windows::UI::Xaml::Controls::TextBox>("ProxyUrl")
                     .and_then(|b| b.Text().ok())
                     .map(|s| s.to_string())
                     .unwrap_or_default();
-                match crate::biz::proxy_cfg::apply(&url) {
-                    Ok(()) => self.label("ProxyStatus", "代理已生效")?,
-                    Err(err) => self.label("ProxyStatus", &format!("失败：{err}"))?,
+                let saved = self.prefs.lock().unwrap().proxy.clone();
+                let cfg = match crate::biz::proxy_cfg::build(&input, &saved) {
+                    Ok(cfg) => cfg,
+                    Err(err) => return self.label("ProxyStatus", &format!("失败：{err}")),
+                };
+                rc_client_core::proxy::set_global_proxy_config(cfg.clone());
+                let switched = self.runtime.set_proxy(cfg.clone());
+                // 输入框回写为不含密码的地址
+                let shown = crate::biz::proxy_cfg::display(&cfg);
+                if let Some(box_) =
+                    self.find_opt::<windows::UI::Xaml::Controls::TextBox>("ProxyUrl")
+                {
+                    let _ = box_.SetText(HSTRING::from(shown));
                 }
-                Ok(())
+                self.save_prefs_patch({
+                    let cfg = cfg.clone();
+                    move |prefs| {
+                        prefs.proxy = cfg;
+                        Ok(())
+                    }
+                })?;
+                let text = match &switched {
+                    Ok(()) => "代理已生效，正在通过新通道重连…",
+                    Err(_) if input.trim().is_empty() => "已关闭代理",
+                    Err(_) => "代理已保存，登录时生效",
+                };
+                self.label("ProxyStatus", text)
             }
             Action::FileTransferToggled(on) => {
-                // v0.2.2 工具权限门控：被控端 host handle 热切换
+                // v0.2.2 工具权限门控：先记住期望值（下次启动被控服务时生效），
+                // 被控服务已在运行则同时热切换
+                self.allow_file_transfer = on;
                 if let Some(handle) = self.host_rt.handle.as_ref() {
                     handle.set_allow_assist_file_transfer(on);
                 }
-                Ok(())
+                self.save_prefs_patch(move |prefs| {
+                    prefs.allow_assist_file_transfer = on;
+                    Ok(())
+                })
             }
             Action::HostToggle(on) => self.on_host_toggle(on),
             Action::HostApprove => self.on_host_approval(true),

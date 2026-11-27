@@ -41,6 +41,7 @@ impl HostRuntime {
     pub fn start(
         manager: &AuthSessionManager,
         password: Option<String>,
+        allow_file_transfer: bool,
     ) -> Result<HostHandle, String> {
         let mtls_config = build_mtls(manager)?;
         let owner_verifier = build_owner_verifier(manager);
@@ -56,7 +57,7 @@ impl HostRuntime {
             audio_enabled: true,
             allow_owner_control: true,
             allow_remote_assist: true,
-            allow_assist_file_transfer: true,
+            allow_assist_file_transfer: allow_file_transfer,
             owner_verifier,
             mtls_config: Some(mtls_config),
             accept_mtls_lan: true,

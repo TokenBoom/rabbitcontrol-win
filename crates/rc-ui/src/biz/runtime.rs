@@ -142,7 +142,11 @@ impl SignalRuntime {
 
     /// 排空全部待处理事件。
     pub fn poll(&self) -> RuntimeEvents {
-        let inner = self.inner.lock().expect("信令运行时锁");
+        // 阻塞型请求（连接 / 远程开机）在后台线程持有同一把锁。此时跳过本轮
+        // 轮询，而不是让 UI 线程等锁——事件都在有界队列里，下一轮再取。
+        let Ok(inner) = self.inner.try_lock() else {
+            return RuntimeEvents::default();
+        };
         let mut events = RuntimeEvents::default();
         if let Some(signal) = inner.signal.as_ref() {
             while let Some(status) = signal.try_recv_status() {
@@ -184,6 +188,41 @@ impl SignalRuntime {
             Some(signal) => signal.request_connect(target_id, timeout),
             None => Err("信令未运行，请先登录".into()),
         }
+    }
+
+    /// 向服务端发起远程开机请求（阻塞 ≤ `timeout`，调用方须在工作线程执行）。
+    ///
+    /// 本机没有目标设备的 MAC 地址：唤醒包由同账号在线设备或服务端转发，
+    /// 这里只负责拿回结果。成功返回提示文案，失败返回原因。
+    pub fn request_wol(&self, target_id: &str, timeout: Duration) -> Result<String, String> {
+        let inner = self.inner.lock().expect("信令运行时锁");
+        let Some(signal) = inner.signal.as_ref() else {
+            return Err("信令未运行，请先登录".into());
+        };
+        let ack = signal
+            .request_wol(target_id, timeout)
+            .map_err(|e| super::ui_error_text(&e))?;
+        if !ack.ok {
+            let from_catalog = ack.ui_error.as_ref().map(super::ui_error_text);
+            let from_server = (!ack.message.trim().is_empty()).then(|| ack.message.clone());
+            return Err(from_catalog
+                .or(from_server)
+                .unwrap_or_else(|| "服务端拒绝了唤醒请求".to_string()));
+        }
+        Ok(wol_success_text(&ack.method))
+    }
+
+    /// 把出站代理应用到正在运行的信令客户端并立即重连以切换通道。
+    ///
+    /// 信令未运行时返回 `Err`（此时只需进程级配置，登录时自然生效）。
+    pub fn set_proxy(&self, proxy: rc_client_core::proxy::ProxyConfig) -> Result<(), String> {
+        let inner = self.inner.lock().expect("信令运行时锁");
+        let Some(signal) = inner.signal.as_ref() else {
+            return Err("信令未运行".into());
+        };
+        signal.set_proxy_config(Some(proxy));
+        signal.trigger_reconnect("proxy config changed");
+        Ok(())
     }
 
     /// LAN 发现的对端快照（直连加速候选）。
@@ -264,5 +303,32 @@ mod tests {
         let (runtime, dir) = test_runtime("lan");
         assert!(runtime.lan_peers().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// 远程开机请求等待服务端确认的上限。
+pub const WOL_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// 远程开机成功文案（按服务端报告的唤醒方式）。
+pub fn wol_success_text(method: &str) -> String {
+    let how = match method {
+        "already_online" => return "设备已在线，无需唤醒".to_string(),
+        "lan_peer" => "已通过局域网内的同账号设备发送唤醒包",
+        "server" => "服务端已转发唤醒请求",
+        _ => "唤醒请求已发送",
+    };
+    format!("{how}，等待设备上线…")
+}
+
+#[cfg(test)]
+mod wol_text_tests {
+    use super::wol_success_text;
+
+    #[test]
+    fn success_text_follows_method() {
+        assert_eq!(wol_success_text("already_online"), "设备已在线，无需唤醒");
+        assert!(wol_success_text("lan_peer").starts_with("已通过局域网"));
+        assert!(wol_success_text("server").contains("服务端"));
+        assert_eq!(wol_success_text(""), "唤醒请求已发送，等待设备上线…");
     }
 }

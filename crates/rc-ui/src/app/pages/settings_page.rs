@@ -58,6 +58,13 @@ impl App {
         if let Some(toggle) = self.find_opt::<ToggleSwitch>("LockOnExitToggle") {
             toggle.SetIsOn(prefs.lock_on_exit)?;
         }
+        if let Some(toggle) = self.find_opt::<ToggleSwitch>("FileTransferToggle") {
+            toggle.SetIsOn(prefs.allow_assist_file_transfer)?;
+        }
+        // 代理地址只显示不含密码的形式
+        if let Some(box_) = self.find_opt::<windows::UI::Xaml::Controls::TextBox>("ProxyUrl") {
+            box_.SetText(HSTRING::from(crate::biz::proxy_cfg::display(&prefs.proxy)))?;
+        }
         if let Some(toggle) = self.find_opt::<ToggleSwitch>("AssistToggle") {
             toggle.SetIsOn(true)?;
         }

@@ -98,9 +98,8 @@ impl App {
                     windows::UI::Xaml::Visibility::Collapsed
                 })?;
                 let id = device.device_id.clone();
-                let mac = device.device_id.clone();
                 item.Click(RoutedEventHandler::new(move |_, _| {
-                    sender.send(Event::Click(Action::WolWake(id.clone(), mac.clone())));
+                    sender.send(Event::Click(Action::WolWake(id.clone())));
                     Ok(())
                 }))?;
             }
