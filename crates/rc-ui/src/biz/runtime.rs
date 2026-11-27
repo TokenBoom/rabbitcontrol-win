@@ -101,6 +101,7 @@ impl SignalRuntime {
                 // v0.1.23 双权限模型：同账号控制与远程协助分开开关。
                 allow_remote_control: Some(true),
                 dynamic_lan_discovery: true,
+                upnp_enabled: true,
             },
             |_| {},
         );

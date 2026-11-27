@@ -92,6 +92,8 @@ pub fn build_session_config(
         prefer_hardware: true,
         // M3.4：rc-clipboard-win 已实装，默认开启（运行时经 SetClipboardEnabled 开关）
         clipboard_enabled: true,
+        connection_mode: Default::default(),
+        tools_only: false,
         audio_enabled: false, // M3.5 WASAPI 播放器落地后开启
         encrypt_connection: true,
         mtls_config: Some(mtls_config),
@@ -162,7 +164,7 @@ pub fn view_state_of(update: &SessionUpdate, current: &SessionView) -> SessionVi
             mtls_active: *mtls_active,
             watch_only: *watch_only,
         },
-        SessionUpdate::Ended { reason } => SessionView::Ended(reason.clone()),
+        SessionUpdate::Ended { reason, .. } => SessionView::Ended(reason.clone()),
         other => {
             let _ = other;
             current.clone()
@@ -371,6 +373,8 @@ mod tests {
             SessionView::Connecting("正在握手…".to_string())
         );
         let ended = SessionUpdate::Ended {
+            recoverable: false,
+            ui_error: None,
             reason: "对端断开".to_string(),
         };
         assert_eq!(

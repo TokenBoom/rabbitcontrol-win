@@ -1095,7 +1095,7 @@ impl App {
                 self.set_session_overlay(&format!("{reason}，自动重连中…"), true);
             }
             // M3.7：异常断开（非用户主动）→ 最多 3 次自动重连，3s 间隔
-            if let SessionUpdate::Ended { reason } = &update {
+            if let SessionUpdate::Ended { reason, .. } = &update {
                 if !self.manual_disconnect && self.reconnect_attempts < 3 {
                     self.reconnect_target = self.session.as_ref().map(|s| s.target_id.clone());
                     self.pending_reconnect_tick = Some(self.tick + 60); // 3s

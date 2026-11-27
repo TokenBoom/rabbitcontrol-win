@@ -24,24 +24,24 @@ rust-version = "1.75"
 license = "AGPL-3.0-only"
 
 [workspace.dependencies]
-rc-types = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.24" }
-rc-diff = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.24" }
-rc-sched = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.24" }
-rc-fec = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.24" }
-rc-proto = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.24" }
-rc-trace = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.24" }
-rc-loopback = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.24" }
-rc-capture = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.24" }
-rc-encode = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.24" }
-rc-decode = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.24" }
-rc-render = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.24" }
-rc-input = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.24" }
-rc-audio = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.24" }
-rc-pipeline = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.24" }
-rc-net = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.24" }
-rc-session = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.24" }
-rc-tools = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.24" }
-rc-client-core = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.1.24" }
+rc-types = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.2.2" }
+rc-diff = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.2.2" }
+rc-sched = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.2.2" }
+rc-fec = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.2.2" }
+rc-proto = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.2.2" }
+rc-trace = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.2.2" }
+rc-loopback = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.2.2" }
+rc-capture = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.2.2" }
+rc-encode = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.2.2" }
+rc-decode = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.2.2" }
+rc-render = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.2.2" }
+rc-input = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.2.2" }
+rc-audio = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.2.2" }
+rc-pipeline = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.2.2" }
+rc-net = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.2.2" }
+rc-session = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.2.2" }
+rc-tools = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.2.2" }
+rc-client-core = { git = "https://github.com/TokenBoom/rabbitcontrol-core.git", tag = "v0.2.2" }
 
 # rc-ui 的 XAML Island 依赖 windows-rs 0.37（最后一个内置 Windows.UI.Xaml 投影的版本），
 # 在其 crate 清单中单独声明；后端 crate 使用最新 windows-rs（WGC / Media Foundation / WASAPI 投影）。

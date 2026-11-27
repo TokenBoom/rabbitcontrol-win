@@ -56,6 +56,7 @@ impl HostRuntime {
             audio_enabled: true,
             allow_owner_control: true,
             allow_remote_assist: true,
+            allow_assist_file_transfer: true,
             owner_verifier,
             mtls_config: Some(mtls_config),
             accept_mtls_lan: true,
