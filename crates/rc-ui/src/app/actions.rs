@@ -67,6 +67,7 @@ pub(crate) enum Action {
     PromptCancel,
     ProxyApply,
     FileTransferToggled(bool),
+    CheckUpdate,
     HostToggle(bool),
     HostApprove,
     HostReject,
@@ -88,6 +89,7 @@ pub(crate) enum Event {
     SessionKey(SessionKeyEvent),
     HostStarted(std::result::Result<rc_client_core::host_bridge::HostHandle, String>),
     AutoStartFinished(std::result::Result<bool, String>),
+    UpdateCheckFinished(std::result::Result<String, String>),
 }
 
 /// 会话启动结果（Box 降低 Event 枚举整体尺寸）。

@@ -10,4 +10,5 @@ pub mod proxy_cfg;
 pub mod runtime;
 pub mod session;
 pub mod settings;
+pub mod update_check;
 pub mod wol;

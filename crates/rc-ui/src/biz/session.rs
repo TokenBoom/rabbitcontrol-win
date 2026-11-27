@@ -184,6 +184,15 @@ pub fn view_state_of(update: &SessionUpdate, current: &SessionView) -> SessionVi
                 None => SessionView::Ended(reason.clone()),
             }
         }
+        SessionUpdate::MediaState { .. } | SessionUpdate::MediaResumed { .. } => {
+            // 音频/视频暂停恢复状态：HUD/状态条可选展示，v1 不改变视图状态
+            current.clone()
+        }
+        SessionUpdate::ToolPermissionDenied { .. } => {
+            // 工具权限被拒：不改变连接状态（工具面板自行提示）
+            current.clone()
+        }
+        SessionUpdate::ToolPermissionsUpdated { .. } => current.clone(),
         other => {
             let _ = other;
             current.clone()

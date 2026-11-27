@@ -328,6 +328,7 @@ impl App {
         self.switch_toggled("AutoStartToggle", Action::AutoStartToggled(true))?;
         self.switch_toggled("FileTransferToggle", Action::FileTransferToggled(true))?;
         self.click("ProxyApplyButton", Action::ProxyApply)?;
+        self.click("CheckUpdateButton", Action::CheckUpdate)?;
         self.click("HostApprove", Action::HostApprove)?;
         self.click("RenamePromptOk", Action::RenamePromptOk)?;
         self.click("RenamePromptCancel", Action::RenamePromptCancel)?;
@@ -806,6 +807,13 @@ impl App {
                 }
                 Event::SessionPointer(pointer) => self.on_session_pointer(pointer)?,
                 Event::SessionKey(key) => self.on_session_key(key)?,
+                Event::UpdateCheckFinished(result) => {
+                    self.set_busy(false)?;
+                    match result {
+                        Ok(text) => self.label("UpdateStatus", &text)?,
+                        Err(err) => self.label("UpdateStatus", &err)?,
+                    }
+                }
                 Event::AutoStartFinished(result) => {
                     self.set_busy(false)?;
                     match result {
@@ -1269,6 +1277,21 @@ impl App {
             Action::PortmapAdd => self.on_portmap_add(),
             Action::PortmapRule(id, op) => self.on_portmap_rule(id, op),
             Action::PromptOk => self.on_prompt_ok(),
+            Action::CheckUpdate => {
+                let events = self.sender();
+                self.set_busy(true)?;
+                thread::spawn(move || {
+                    let result = crate::biz::update_check::check().map(|check| {
+                        if check.is_newer {
+                            format!("新版本 {} 可用", check.version)
+                        } else {
+                            format!("已是最新版本 {}", crate::biz::update_check::CURRENT_VERSION)
+                        }
+                    });
+                    events.send(Event::UpdateCheckFinished(result));
+                });
+                Ok(())
+            }
             Action::ProxyApply => {
                 let url = self
                     .find_opt::<windows::UI::Xaml::Controls::TextBox>("ProxyUrl")
@@ -1276,14 +1299,16 @@ impl App {
                     .map(|s| s.to_string())
                     .unwrap_or_default();
                 match crate::biz::proxy_cfg::apply(&url) {
-                    Ok(()) => self.label("AutoStartCaption", "代理已应用")?,
-                    Err(err) => self.label("AutoStartCaption", &format!("代理失败：{err}"))?,
+                    Ok(()) => self.label("ProxyStatus", "代理已生效")?,
+                    Err(err) => self.label("ProxyStatus", &format!("失败：{err}"))?,
                 }
                 Ok(())
             }
             Action::FileTransferToggled(on) => {
-                // v0.2.2 工具权限门控：运行时经 host handle 传递
-                let _ = on;
+                // v0.2.2 工具权限门控：被控端 host handle 热切换
+                if let Some(handle) = self.host_rt.handle.as_ref() {
+                    handle.set_allow_assist_file_transfer(on);
+                }
                 Ok(())
             }
             Action::HostToggle(on) => self.on_host_toggle(on),
