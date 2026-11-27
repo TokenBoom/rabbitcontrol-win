@@ -20,9 +20,10 @@
 //! 骨架占位。
 
 #![deny(missing_docs)]
-#![forbid(unsafe_code)]
+#![allow(unsafe_code)] // Shell_NotifyIconW FFI（托盘）
 
 pub mod state;
+pub mod tray;
 
 /// 托盘应用（骨架占位）。
 #[derive(Default)]
