@@ -69,6 +69,8 @@ impl PlatformMediaProvider for WinMediaProvider {
 
     fn supports_hevc(&self) -> bool {
         // TODO: MFT 枚举探测 HEVC 硬编/硬解能力后再上报。
+        // v0.2.2 Av1 (7e-1)：Codec::Av1 协商时 encode/decode 均返回
+        // InvalidConfig fail-closed（rc-encode-mf/decode-mf 仅支持 H.264）。
         false
     }
 
