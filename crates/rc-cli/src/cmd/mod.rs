@@ -1,6 +1,7 @@
 //! rc-cli 子命令分发。
 
 mod auth_probe;
+mod loopback;
 
 use std::process::ExitCode;
 
@@ -20,6 +21,24 @@ pub struct Cli {
 pub enum Command {
     /// 探测硬件能力（采集/编解码/渲染/音频）。
     Probe,
+    /// 进程内采集→编码→解码→呈现回环压测（真实后端）。
+    Loopback {
+        /// 运行时长（秒）。
+        #[arg(long, default_value_t = 10)]
+        duration: u64,
+        /// 分辨率宽。
+        #[arg(long, default_value_t = 1920)]
+        width: u32,
+        /// 分辨率高。
+        #[arg(long, default_value_t = 1080)]
+        height: u32,
+        /// 目标帧率。
+        #[arg(long, default_value_t = 60)]
+        fps: u32,
+        /// 严格模式（延迟不变式违例即失败）。
+        #[arg(long, default_value_t = false)]
+        strict: bool,
+    },
     /// 联调登录回归（探测 → 登录 → 设备列表，凭据不落盘）。
     AuthProbe {
         /// 服务器地址（默认 https://，本机调试可用 http://loopback）。
@@ -43,6 +62,13 @@ pub fn dispatch(cli: Cli) -> Result<ExitCode, String> {
             run_probe();
             Ok(ExitCode::SUCCESS)
         }
+        Command::Loopback {
+            duration,
+            width,
+            height,
+            fps,
+            strict,
+        } => loopback::run(duration, width, height, fps, strict).map(|()| ExitCode::SUCCESS),
         Command::AuthProbe {
             origin,
             email,

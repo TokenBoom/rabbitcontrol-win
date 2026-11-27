@@ -827,6 +827,7 @@ dependencies = [
  "rc-d3d11",
  "rc-decode-mf",
  "rc-encode-mf",
+ "rc-loopback",
  "rc-platform-win",
  "rc-types",
 ]
@@ -974,6 +975,21 @@ dependencies = [
  "rc-types",
  "rc-win32core",
  "windows 0.58.0",
+]
+
+[[package]]
+name = "rc-loopback"
+version = "0.1.0"
+source = "git+https://github.com/TokenBoom/rabbitcontrol-core.git?tag=v0.1.24#89aa1de8bfca9013495df8c90dedd221930981f5"
+dependencies = [
+ "rand 0.8.8",
+ "rc-capture",
+ "rc-diff",
+ "rc-encode",
+ "rc-pipeline",
+ "rc-sched",
+ "rc-trace",
+ "rc-types",
 ]
 
 [[package]]

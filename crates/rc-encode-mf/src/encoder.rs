@@ -83,30 +83,30 @@ impl MfEncoder {
         }
         .map_err(|e| Error::InvalidConfig(format!("异步 MFT 解锁失败：{e}")))?;
 
-        // 输入类型：NV12（D3D11 零拷贝路径，尺寸/帧率随配置）
-        let in_type = unsafe { MFCreateMediaType() }.map_err(mf_err("创建输入类型失败"))?;
+        // D3D 管理器：共享设备（与采集/解码同设备，零拷贝前提）
+        let shared = rc_d3d11::SharedDevice::get().map_err(Error::InvalidConfig)?;
+        let mut manager = None;
+        let mut token = 0u32;
         unsafe {
-            in_type
-                .SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)
-                .map_err(mf_err("设置主类型失败"))?;
-            in_type
-                .SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_NV12)
-                .map_err(mf_err("设置输入子类型失败"))?;
-            in_type
-                .SetUINT64(
-                    &MF_MT_FRAME_SIZE,
-                    ((cfg.resolution.width as u64) << 32) | cfg.resolution.height as u64,
-                )
-                .map_err(mf_err("设置输入尺寸失败"))?;
-            in_type
-                .SetUINT64(&MF_MT_FRAME_RATE, ((cfg.fps.max(1) as u64) << 32) | 1)
-                .map_err(mf_err("设置输入帧率失败"))?;
-            in_type
-                .SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)
-                .map_err(mf_err("设置逐行扫描失败"))?;
+            windows::Win32::Media::MediaFoundation::MFCreateDXGIDeviceManager(
+                &mut token,
+                &mut manager,
+            )
+        }
+        .map_err(mf_err("创建 D3D 管理器失败"))?;
+        let manager = manager.ok_or_else(|| Error::InvalidConfig("D3D 管理器缺失".into()))?;
+        let device = shared.device();
+        unsafe {
+            manager
+                .ResetDevice(&device, token)
+                .map_err(mf_err("ResetDevice 失败"))?;
+            let manager_unk = manager
+                .cast::<windows::core::IUnknown>()
+                .map_err(mf_err("D3D 管理器转接口失败"))?;
+            let manager_raw = windows::core::Interface::as_raw(&manager_unk) as usize;
             transform
-                .SetInputType(0, &in_type, 0)
-                .map_err(mf_err("设置输入类型失败"))?;
+                .ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, manager_raw)
+                .map_err(mf_err("绑定 D3D 管理器失败"))?;
         }
 
         // 输出类型：H.264 + 码率（Annex-B 由编码器字节流保证）
@@ -135,54 +135,55 @@ impl MfEncoder {
                 .map_err(mf_err("设置输出类型失败"))?;
         }
 
-        // D3D 管理器：共享设备（与采集/解码同设备，零拷贝前提）
-        let shared = rc_d3d11::SharedDevice::get().map_err(Error::InvalidConfig)?;
-        let mut manager = None;
-        let mut token = 0u32;
+        // 输入类型：NV12（D3D11 零拷贝路径，尺寸/帧率随配置）
+        let in_type = unsafe { MFCreateMediaType() }.map_err(mf_err("创建输入类型失败"))?;
         unsafe {
-            windows::Win32::Media::MediaFoundation::MFCreateDXGIDeviceManager(
-                &mut token,
-                &mut manager,
-            )
-        }
-        .map_err(mf_err("创建 D3D 管理器失败"))?;
-        let manager = manager.ok_or_else(|| Error::InvalidConfig("D3D 管理器缺失".into()))?;
-        let device = shared.device();
-        unsafe {
-            manager
-                .ResetDevice(&device, token)
-                .map_err(mf_err("ResetDevice 失败"))?;
-            let manager_unk = manager
-                .cast::<windows::core::IUnknown>()
-                .map_err(mf_err("D3D 管理器转接口失败"))?;
-            let manager_raw = windows::core::Interface::as_raw(&manager_unk) as usize;
+            in_type
+                .SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)
+                .map_err(mf_err("设置主类型失败"))?;
+            in_type
+                .SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_NV12)
+                .map_err(mf_err("设置输入子类型失败"))?;
+            in_type
+                .SetUINT64(
+                    &MF_MT_FRAME_SIZE,
+                    ((cfg.resolution.width as u64) << 32) | cfg.resolution.height as u64,
+                )
+                .map_err(mf_err("设置输入尺寸失败"))?;
+            in_type
+                .SetUINT64(&MF_MT_FRAME_RATE, ((cfg.fps.max(1) as u64) << 32) | 1)
+                .map_err(mf_err("设置输入帧率失败"))?;
+            in_type
+                .SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)
+                .map_err(mf_err("设置逐行扫描失败"))?;
             transform
-                .ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, manager_raw)
-                .map_err(mf_err("绑定 D3D 管理器失败"))?;
+                .SetInputType(0, &in_type, 0)
+                .map_err(mf_err("设置输入类型失败"))?;
         }
 
-        // 编码参数：CBR + 低延迟 + 无限 GOP
+        // 编码参数：CBR + 低延迟 + 无限 GOP（不支持的键降级为默认值——
+        // 部分驱动仅实现 ICodecAPI 子集，E_INVALIDARG 属常态）
         let codec: ICodecAPI = transform.cast().map_err(mf_err("获取 ICodecAPI 失败"))?;
-        set_codec_u32(
+        let _ = set_codec_u32(
             &codec,
             &CODECAPI_AVEncCommonRateControlMode,
             eAVEncCommonRateControlMode_CBR.0 as u32,
-        )?;
-        set_codec_u32(&codec, &CODECAPI_AVEncCommonMeanBitRate, cfg.bitrate_bps)?;
-        set_codec_bool(
+        );
+        let _ = set_codec_u32(&codec, &CODECAPI_AVEncCommonMeanBitRate, cfg.bitrate_bps);
+        let _ = set_codec_bool(
             &codec,
             &windows::Win32::Media::MediaFoundation::CODECAPI_AVEncCommonLowLatency,
-        )?;
-        set_codec_bool(
+        );
+        let _ = set_codec_bool(
             &codec,
             &windows::Win32::Media::MediaFoundation::CODECAPI_AVLowLatencyMode,
-        )?;
+        );
         if cfg.gop_len > 0 {
-            set_codec_u32(
+            let _ = set_codec_u32(
                 &codec,
                 &windows::Win32::Media::MediaFoundation::CODECAPI_AVEncMPVGOPSize,
                 cfg.gop_len,
-            )?;
+            );
         }
 
         // 流启动
@@ -452,7 +453,13 @@ impl Encoder for MfEncoder {
         if bps == 0 {
             return Err(Error::InvalidConfig("bitrate must be > 0".into()));
         }
-        set_codec_u32(&self.codec, &CODECAPI_AVEncCommonMeanBitRate, bps)?;
+        if set_codec_u32(&self.codec, &CODECAPI_AVEncCommonMeanBitRate, bps).is_err() {
+            eprintln!(
+                "[rc-encode-mf] 码率调整被驱动拒绝（保持旧值 {}）",
+                self.cfg.bitrate_bps
+            );
+            return Ok(());
+        }
         self.cfg.bitrate_bps = bps;
         Ok(())
     }

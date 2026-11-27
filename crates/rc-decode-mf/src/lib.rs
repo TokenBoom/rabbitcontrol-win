@@ -25,7 +25,7 @@ use windows::Win32::Media::MediaFoundation::{
     MFCreateMemoryBuffer, MFMediaType_Video, MFVideoFormat_H264, MFVideoFormat_NV12,
     MFT_MESSAGE_COMMAND_FLUSH, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
     MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_MESSAGE_SET_D3D_MANAGER, MFT_OUTPUT_DATA_BUFFER,
-    MF_E_TRANSFORM_NEED_MORE_INPUT, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE,
+    MF_E_TRANSFORM_NEED_MORE_INPUT, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE, MF_TRANSFORM_ASYNC_UNLOCK,
 };
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
 
@@ -84,6 +84,11 @@ impl MfDecoder {
 
         let transform = unsafe { activate_h264_decoder() }
             .map_err(|e| Error::InvalidConfig(format!("未找到 H.264 解码 MFT：{e}")))?;
+        // 硬件解码 MFT 是异步 MFT，必须解锁后才能设置类型/处理消息
+        if let Ok(attrs) = unsafe { transform.GetAttributes() } {
+            unsafe { attrs.SetUINT32(&MF_TRANSFORM_ASYNC_UNLOCK, 1) }
+                .map_err(|e| Error::InvalidConfig(format!("异步 MFT 解锁失败：{e:?}")))?;
+        }
 
         unsafe {
             transform.ProcessMessage(
@@ -93,28 +98,34 @@ impl MfDecoder {
         }
         .map_err(|e| Error::InvalidConfig(format!("SET_D3D_MANAGER 失败：{e:?}")))?;
 
+        // 输入类型：H.264（解码器：输入先于输出协商）
         let in_type: IMFMediaType = unsafe { MFCreateMediaType() }
-            .map_err(|e| Error::InvalidConfig(format!("MFCreateMediaType 失败：{e:?}")))?;
+            .map_err(|e| Error::InvalidConfig(format!("创建输入类型失败：{e:?}")))?;
         unsafe {
             in_type
                 .SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)
-                .map_err(mfw)?;
+                .map_err(|e| Error::InvalidConfig(format!("in major：{e:?}")))?;
             in_type
                 .SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264)
-                .map_err(mfw)?;
-            transform.SetInputType(0, &in_type, 0).map_err(mfw)?;
+                .map_err(|e| Error::InvalidConfig(format!("in subtype：{e:?}")))?;
+            transform
+                .SetInputType(0, &in_type, 0)
+                .map_err(|e| Error::InvalidConfig(format!("SetInputType：{e:?}")))?;
         }
 
+        // 输出类型：NV12
         let out_type: IMFMediaType = unsafe { MFCreateMediaType() }
-            .map_err(|e| Error::InvalidConfig(format!("MFCreateMediaType 失败：{e:?}")))?;
+            .map_err(|e| Error::InvalidConfig(format!("创建输出类型失败：{e:?}")))?;
         unsafe {
             out_type
                 .SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)
-                .map_err(mfw)?;
+                .map_err(|e| Error::InvalidConfig(format!("out major：{e:?}")))?;
             out_type
                 .SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_NV12)
-                .map_err(mfw)?;
-            transform.SetOutputType(0, &out_type, 0).map_err(mfw)?;
+                .map_err(|e| Error::InvalidConfig(format!("out subtype：{e:?}")))?;
+            transform
+                .SetOutputType(0, &out_type, 0)
+                .map_err(|e| Error::InvalidConfig(format!("SetOutputType：{e:?}")))?;
         }
 
         unsafe {
