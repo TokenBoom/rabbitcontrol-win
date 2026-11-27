@@ -29,12 +29,17 @@
 #![deny(missing_docs)]
 #![deny(unsafe_code)]
 
+pub mod dxgi;
 pub mod probe;
 
-use std::time::Duration;
+pub use dxgi::{
+    list_main_display_modes, main_display_backing_resolution, main_display_logical_resolution,
+    DisplayModePreset, DxgiBackend,
+};
 
-use rc_capture::{CaptureBackend, CapturedFrame, DisplayInfo, InvalidationReason};
-use rc_types::{DisplayId, Error, Resolution, Result};
+use rc_capture::CaptureBackend;
+pub use rc_capture::DisplayInfo;
+use rc_types::{Resolution, Result};
 
 /// DXGI 采集配置。
 #[derive(Debug, Clone, Copy)]
@@ -49,88 +54,24 @@ pub struct DxgiConfig {
     pub origin_us: Option<u64>,
 }
 
-/// DXGI Desktop Duplication 采集后端（骨架占位）。
-// 字段在 DXGI 实现落地后投入使用。
-#[allow(dead_code)]
-pub struct DxgiBackend {
-    cfg: DxgiConfig,
-    display: DisplayInfo,
-    seq: u64,
-}
-
-/// 构造 DXGI 采集后端。
+/// 构造 DXGI 采集后端（duplication 立即建立，失败上抛由平台层降级）。
 pub fn new_backend(cfg: DxgiConfig) -> Result<DxgiBackend> {
-    // TODO: rc_d3d11::SharedDevice::get() → 按 cfg.display 枚举 IDXGIOutput
-    // → DuplicateOutput；帧到达后拷贝到共享设备上的自有纹理再交付
-    // （duplication 帧在下次 Acquire 前必须释放）。
-    Ok(DxgiBackend {
-        cfg,
-        display: DisplayInfo {
-            id: DisplayId(cfg.display),
-            resolution: cfg.resolution.unwrap_or(Resolution::new(1920, 1080)),
-            scale: 1.0,
-            hdr: false,
-        },
-        seq: 0,
-    })
+    DxgiBackend::new(cfg)
 }
 
-impl CaptureBackend for DxgiBackend {
-    fn next_frame(&mut self, _timeout: Duration) -> Result<Option<CapturedFrame>> {
-        // TODO: AcquireNextFrame(timeout) → 超时/无变化 Ok(None)；
-        // DirtyRects 合并裁剪；LastPresentTime 按 origin_us 换算为
-        // host_time_us 时间轴上的内容变化时刻。
-        Err(Error::InvalidConfig(
-            "dxgi capture not yet implemented".into(),
-        ))
-    }
-
-    fn poll_invalidation(&mut self) -> Option<InvalidationReason> {
-        // TODO: 订阅 WM_DISPLAYCHANGE / WTS_SESSION_LOCK 上报失效。
-        None
-    }
-
-    fn rebuild(&mut self) -> Result<()> {
-        // TODO: 幂等重建 duplication：释放旧 IDXGIOutputDuplication 后
-        // 重新 DuplicateOutput；连续调用不报错（契约 C5）。
-        Ok(())
-    }
-
-    fn display_info(&self) -> DisplayInfo {
-        self.display
-    }
+/// 包装为 trait 对象 + 后端标签（平台 provider 使用）。
+pub fn new_backend_trait(cfg: DxgiConfig) -> Result<(Box<dyn CaptureBackend>, &'static str)> {
+    let backend = new_backend(cfg)?;
+    Ok((Box::new(backend), "dxgi"))
 }
 
 /// 主屏逻辑分辨率（DPI 缩放后）。
 ///
 /// TODO: `GetDpiForSystem` + `GetSystemMetrics` 换算。
-pub fn main_display_logical_resolution() -> Option<Resolution> {
-    None
-}
-
 /// 主屏物理分辨率。
-pub fn main_display_backing_resolution() -> Option<Resolution> {
-    None
-}
-
-/// 显示模式预设。
-#[derive(Debug, Clone, Copy)]
-pub struct DisplayModePreset {
-    /// 宽（像素）。
-    pub width: u32,
-    /// 高（像素）。
-    pub height: u32,
-    /// 是否 HiDPI 模式。
-    pub is_hidpi: bool,
-}
-
 /// 枚举主屏可用显示模式。
 ///
 /// TODO: `EnumDisplaySettingsW`（`ENUM_CURRENT_SETTINGS`/`ENUM_REGISTRY_SETTINGS` 遍历）。
-pub fn list_main_display_modes() -> Vec<DisplayModePreset> {
-    Vec::new()
-}
-
 /// 显示模式会话守卫：切换到目标分辨率，[`DisplayModeGuard::restore`] 恢复。
 ///
 /// TODO: `ChangeDisplaySettingsExW`（`CDS_FULLSCREEN` 避免写入注册表）。
@@ -166,13 +107,46 @@ impl DisplayModeGuard {
 ///
 /// TODO: 读取壁纸源文件（`SystemParametersInfoW(SPI_GETDESKWALLPAPER)`）
 /// 经 WIC 缩放转码 JPEG；纯色/幻灯片目录回退为桌面截图。
-pub fn main_display_wallpaper_jpeg(_max_width: u32, _max_height: u32) -> Option<Vec<u8>> {
-    None
-}
-
 /// 立即锁定屏幕。
 ///
 /// TODO: `LockWorkStation`。
 pub fn lock_screen_now() -> bool {
     false
+}
+
+/// 主屏 [`DisplayInfo`] 快照（采集前协商用）。
+pub fn main_display_info() -> Option<DisplayInfo> {
+    let backing = main_display_backing_resolution()?;
+    let logical = main_display_logical_resolution()?;
+    let scale = if logical.width > 0 {
+        backing.width as f32 / logical.width as f32
+    } else {
+        1.0
+    };
+    Some(DisplayInfo {
+        id: rc_types::DisplayId(0),
+        resolution: backing,
+        scale,
+        hdr: false,
+    })
+}
+
+/// 主屏壁纸 JPEG 快照（M5b.4 被控状态页用；当前未实装返回 None）。
+pub fn main_display_wallpaper_jpeg(_max_width: u32, _max_height: u32) -> Option<Vec<u8>> {
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_helpers_do_not_panic() {
+        // 真实显示器环境返回 Some；CI 无头环境允许 None
+        let _ = main_display_backing_resolution();
+        let _ = main_display_logical_resolution();
+        let _ = main_display_info();
+        let modes = list_main_display_modes();
+        let _ = modes.len();
+    }
 }
