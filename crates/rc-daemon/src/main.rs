@@ -41,6 +41,8 @@ fn main() {
         Some("start") => report(service::control(true)),
         Some("stop") => report(service::control(false)),
         Some("status") => report(service::status()),
+        Some("setup") => report(service::setup()),
+        Some("teardown") => report(service::teardown()),
         Some("ping") => match pipe::call(r#"{"op":"ping"}"#) {
             Ok(reply) => println!("pong：{reply}"),
             Err(err) => {

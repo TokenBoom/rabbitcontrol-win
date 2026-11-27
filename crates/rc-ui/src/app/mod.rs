@@ -198,6 +198,13 @@ impl App {
         eprintln!("[App::new] wire OK");
         app.apply_brand();
         crate::ui::session_window::set_main_hwnd(shell.hwnd());
+        {
+            let events = app.sender();
+            thread::spawn(move || {
+                let running = crate::biz::autostart::daemon_reachable();
+                events.send(Event::AutoStartFinished(Ok(running)));
+            });
+        }
         app.update_caption()?;
         app.apply_scale()?;
         if app.auth.has_saved_session() {
@@ -318,6 +325,7 @@ impl App {
         self.switch_toggled("EncryptToggle", Action::EncryptToggled(true))?;
         self.switch_toggled("LockOnExitToggle", Action::LockOnExitToggled(true))?;
         self.switch_toggled("HostSwitch", Action::HostToggle(true))?;
+        self.switch_toggled("AutoStartToggle", Action::AutoStartToggled(true))?;
         self.click("HostApprove", Action::HostApprove)?;
         self.click("RenamePromptOk", Action::RenamePromptOk)?;
         self.click("RenamePromptCancel", Action::RenamePromptCancel)?;
@@ -796,6 +804,24 @@ impl App {
                 }
                 Event::SessionPointer(pointer) => self.on_session_pointer(pointer)?,
                 Event::SessionKey(key) => self.on_session_key(key)?,
+                Event::AutoStartFinished(result) => {
+                    self.set_busy(false)?;
+                    match result {
+                        Ok(running) => {
+                            let _ = self.set_checked_named("AutoStartToggle", running);
+                            let caption = if running {
+                                "后台服务运行中（开机自动启动）"
+                            } else {
+                                "已关闭；注册系统服务实现开机自启与提权代理"
+                            };
+                            self.label("AutoStartCaption", caption)?;
+                        }
+                        Err(err) => {
+                            let _ = self.set_checked_named("AutoStartToggle", false);
+                            self.label("AutoStartCaption", &format!("失败：{err}"))?;
+                        }
+                    }
+                }
                 Event::HostStarted(result) => {
                     self.set_busy(false)?;
                     match result {
@@ -1313,6 +1339,15 @@ impl App {
                         });
                     }
                 }
+                Ok(())
+            }
+            Action::AutoStartToggled(on) => {
+                let events = self.sender();
+                self.set_busy(true)?;
+                thread::spawn(move || {
+                    let result = crate::biz::autostart::set_enabled(on).map(|_| on);
+                    events.send(Event::AutoStartFinished(result));
+                });
                 Ok(())
             }
             Action::RenamePromptCancel => {

@@ -330,6 +330,19 @@
                     <ColumnDefinition Width="Auto"/>
                   </Grid.ColumnDefinitions>
                   <StackPanel Spacing="2">
+                    <TextBlock Text="开机自动启动（后台服务）" Style="{StaticResource BodyText}"/>
+                    <TextBlock x:Name="AutoStartCaption" Text="注册系统服务实现开机自启与提权代理；开启时弹 UAC 授权" Style="{StaticResource CaptionText}"/>
+                  </StackPanel>
+                  <ToggleSwitch x:Name="AutoStartToggle" Grid.Column="1" OnContent="" OffContent="" Margin="0" IsEnabled="True"/>
+                </Grid>
+              </Border>
+              <Border Style="{StaticResource SettingRowBorder}">
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                  </Grid.ColumnDefinitions>
+                  <StackPanel Spacing="2">
                     <TextBlock Text="默认开启加密连接" Style="{StaticResource BodyText}"/>
                     <TextBlock Text="会话建立时优先协商 mTLS 端到端加密" Style="{StaticResource CaptionText}"/>
                   </StackPanel>

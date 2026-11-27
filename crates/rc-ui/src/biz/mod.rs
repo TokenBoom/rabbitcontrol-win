@@ -3,6 +3,7 @@
 //! 本层不引用任何 windows 类型，全部可单测；对 UI 层暴露纯值接口。
 
 pub mod auth;
+pub mod autostart;
 pub mod history;
 pub mod host;
 pub mod runtime;

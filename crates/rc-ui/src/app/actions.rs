@@ -70,6 +70,7 @@ pub(crate) enum Action {
     HostReject,
     RenamePromptOk,
     RenamePromptCancel,
+    AutoStartToggled(bool),
 }
 
 pub(crate) enum Event {
@@ -84,6 +85,7 @@ pub(crate) enum Event {
     SessionPointer(SessionPointerEvent),
     SessionKey(SessionKeyEvent),
     HostStarted(std::result::Result<rc_client_core::host_bridge::HostHandle, String>),
+    AutoStartFinished(std::result::Result<bool, String>),
 }
 
 /// 会话启动结果（Box 降低 Event 枚举整体尺寸）。

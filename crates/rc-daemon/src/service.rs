@@ -394,6 +394,25 @@ pub fn control(start: bool) -> Result<(), String> {
     }
 }
 
+/// 一键安装并启动（GUI UAC 提权单次调用入口）。
+pub fn setup() -> Result<(), String> {
+    install()?;
+    control(true)?;
+    // 就绪探测：管道可达即成功（最长 ~5s）
+    for _ in 0..10 {
+        if crate::pipe::call(r#"{"op":"ping"}"#).is_ok() {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    Err("服务已启动但管道未就绪".into())
+}
+
+/// 一键停止并卸载（GUI UAC 提权单次调用入口）。
+pub fn teardown() -> Result<(), String> {
+    uninstall()
+}
+
 /// CLI status：优先查 SCM；SCM 不可用时尝试管道 Ping（区分服务未装 vs 停止）。
 pub fn status() -> Result<(), String> {
     unsafe {
