@@ -76,3 +76,15 @@ powershell -ExecutionPolicy Bypass -File scripts\package-win.ps1
 - Rust stable（MSVC），Windows 10 1903+
 - VS 2022 Build Tools「使用 C++ 的桌面开发」工作负载
 - rc-ui 额外依赖 windows-rs 0.37（XAML Islands 投影）+ 0.58（DXGI/WASAPI），通过 `windows58` 别名共存
+
+## 信任与安全
+
+本项目为开源软件，代码签名证书（付费）暂未购买。用户可通过以下方式验证二进制可信：
+
+1. **源码可审计**：全部代码托管于 GitHub，构建流程（CI + 本地脚本）公开可查
+2. **SHA256 校验**：每次 Release 附带 zip 包，下载后可用 `Get-FileHash` 校验一致性
+3. **防火墙路径规则**：安装守护服务时自动注册路径级允许规则，重编译不影响授权
+4. **命名管道 DACL**：守护服务管道默认仅允许 SYSTEM/管理员连接
+5. **网络隔离**：被控端仅在用户显式开启「本机被控」开关后才监听端口；每次连接均需审批或密码验证
+
+首次运行时 Windows 防火墙可能弹窗（未签名 exe 的正常行为），点「允许」即可；安装后台服务后不再弹窗。
