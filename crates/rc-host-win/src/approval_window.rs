@@ -155,13 +155,26 @@ pub fn hide() {
     UI.lock().unwrap_or_else(|e| e.into_inner()).prompt = None;
 }
 
-/// 取走待审批的代次（界面线程点击按钮时用）。
-pub fn pending_generation() -> Option<u64> {
+/// 取当前待审批的代次（没有待审批请求时为 `None`）。
+fn pending_generation() -> Option<u64> {
     UI.lock()
         .unwrap_or_else(|e| e.into_inner())
         .prompt
         .as_ref()
         .map(|p| p.generation)
+}
+
+/// 把审批结果打包进窗口消息参数：`wParam` 是否放行，`lParam` 审批代次。
+///
+/// 代次必须随消息传递：点击后窗口立即收起、待审批记录被清空，界面线程稍后
+/// 处理这条消息时再去查「当前待审批代次」就查不到了。
+pub fn pack_result(generation: u64, accept: bool) -> (usize, isize) {
+    (usize::from(accept), generation as isize)
+}
+
+/// [`pack_result`] 的逆操作：还原 `(审批代次, 是否放行)`。
+pub fn unpack_result(wparam: usize, lparam: isize) -> (u64, bool) {
+    (lparam as u64, wparam == 1)
 }
 
 /// 每秒刷新一次倒计时；返回 `true` 表示已过自动拒绝时刻。
@@ -360,13 +373,9 @@ fn submit(button: Button) {
     if agent.0.is_null() {
         return;
     }
+    let (wparam, lparam) = pack_result(generation, button == Button::Allow);
     unsafe {
-        let _ = PostMessageW(
-            agent,
-            RESULT_MSG,
-            WPARAM(usize::from(button == Button::Allow)),
-            LPARAM(generation as isize),
-        );
+        let _ = PostMessageW(agent, RESULT_MSG, WPARAM(wparam), LPARAM(lparam));
     }
     // 立刻收起；引擎确认后还会发「已了结」事件
     hide();
@@ -605,6 +614,15 @@ fn make_font(size_px: i32, weight: windows::Win32::Graphics::Gdi::FONT_WEIGHT, d
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn approval_result_travels_with_the_message() {
+        // 点击后窗口立刻收起、待审批记录清空：结果与代次必须完整地装在消息里
+        for (generation, accept) in [(0u64, true), (7u64, false), (u64::MAX, true)] {
+            let packed = pack_result(generation, accept);
+            assert_eq!(unpack_result(packed.0, packed.1), (generation, accept));
+        }
+    }
 
     #[test]
     fn logical_pixels_scale_with_rounding() {

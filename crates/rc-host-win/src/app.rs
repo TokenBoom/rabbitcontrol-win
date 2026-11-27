@@ -368,12 +368,15 @@ unsafe extern "system" fn agent_wndproc(
             LRESULT(0)
         }
         approval_window::RESULT_MSG => {
-            let accept = wparam.0 == 1;
-            if let Some(generation) = approval_window::pending_generation() {
-                let _ = state
-                    .commands
-                    .send(Command::RespondApproval { generation, accept });
-            }
+            // 代次随消息传递：审批窗点击后立刻收起，事后去查「当前待审批」已查不到
+            let (generation, accept) = approval_window::unpack_result(wparam.0, lparam.0);
+            diag_log!(
+                "审批结果：{}（代次 {generation}）",
+                if accept { "允许" } else { "拒绝" }
+            );
+            let _ = state
+                .commands
+                .send(Command::RespondApproval { generation, accept });
             LRESULT(0)
         }
         WM_TIMER => {
