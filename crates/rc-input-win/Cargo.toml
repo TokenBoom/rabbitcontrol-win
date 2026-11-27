@@ -10,3 +10,9 @@ license.workspace = true
 rc-input.workspace = true
 rc-types.workspace = true
 rc-win32core = { path = "../rc-win32core" }
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
