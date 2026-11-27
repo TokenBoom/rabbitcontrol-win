@@ -164,6 +164,11 @@ pub fn view_state_of(update: &SessionUpdate, current: &SessionView) -> SessionVi
             mtls_active: *mtls_active,
             watch_only: *watch_only,
         },
+        SessionUpdate::Reconnecting {
+            attempt,
+            max_attempts,
+            reason,
+        } => SessionView::Connecting(format!("重连中 {attempt}/{max_attempts}：{reason}")),
         SessionUpdate::Ended {
             reason, ui_error, ..
         } => {
