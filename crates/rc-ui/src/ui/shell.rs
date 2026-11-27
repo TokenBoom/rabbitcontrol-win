@@ -152,7 +152,12 @@ struct DragState {
 // 使用指针捕获与屏幕坐标直移替代系统模态移动循环，避免与 XAML Island 消息泵冲突导致卡顿或失效。
 fn attach_caption(root: &FrameworkElement, hwnd: HWND) -> Result<()> {
     // 登录浮层覆盖标题栏时，顶部 40px 拖动条接管拖动。
+    // 缺失元素只跳过不报错——拖动是增强功能，不应阻塞启动。
     for name in ["DragRegion", "LoginDragRegion"] {
+        if root.FindName(name).is_err() {
+            eprintln!("[attach_caption] 拖动区 {name} 不存在，跳过");
+            continue;
+        }
         bind_drag_region(root, name, hwnd)?;
     }
     // 登录态沉浸式按钮（与标题栏共用系统命令）

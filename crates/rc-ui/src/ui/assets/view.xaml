@@ -498,7 +498,7 @@
     </Grid>
   </Grid>
 
-  <!-- ===== 登录浮层（覆盖内容区；标题栏保持可见） ===== -->
+  <!-- ===== 登录浮层（沉浸式：覆盖全窗，自带右上角按钮） ===== -->
   <Grid x:Name="LoginOverlay" Grid.Row="0" Grid.RowSpan="2" Visibility="Visible">
     <Grid.Background>
       <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
@@ -506,6 +506,12 @@
         <GradientStop Color="#F5F0FF" Offset="1"/>
       </LinearGradientBrush>
     </Grid.Background>
+    <!-- 沉浸式：右上角最小化/关闭 + 顶部可拖动区（无标题栏文字与图标） -->
+    <Border x:Name="LoginDragRegion" Height="40" VerticalAlignment="Top" Background="Transparent"/>
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+      <Button x:Name="LoginMinimize" AutomationProperties.Name="最小化" Content="&#xE921;" Style="{StaticResource CaptionButton}"/>
+      <Button x:Name="LoginClose" AutomationProperties.Name="关闭" Content="&#xE8BB;" Style="{StaticResource CaptionCloseButton}"/>
+    </StackPanel>
     <!-- 登录视图：定宽居中（窗口恒 1000×660 逻辑尺寸，内容必容纳，无需滚动） -->
     <StackPanel x:Name="LoginView" Width="360" HorizontalAlignment="Center" VerticalAlignment="Center">
       <!-- 品牌 logo 区域 -->
