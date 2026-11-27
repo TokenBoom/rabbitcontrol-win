@@ -164,7 +164,21 @@ pub fn view_state_of(update: &SessionUpdate, current: &SessionView) -> SessionVi
             mtls_active: *mtls_active,
             watch_only: *watch_only,
         },
-        SessionUpdate::Ended { reason, .. } => SessionView::Ended(reason.clone()),
+        SessionUpdate::Ended {
+            reason, ui_error, ..
+        } => {
+            // v0.2.2 UiError 集成：优先用结构化错误标题+建议
+            match ui_error {
+                Some(err) => {
+                    let mut text = err.title.clone();
+                    if !err.suggestion.is_empty() {
+                        text.push_str(&format!("（{}）", err.suggestion));
+                    }
+                    SessionView::Ended(text)
+                }
+                None => SessionView::Ended(reason.clone()),
+            }
+        }
         other => {
             let _ = other;
             current.clone()
