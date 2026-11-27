@@ -83,10 +83,10 @@ mod tests {
 
     #[test]
     fn ico_decodes_largest_frame() {
-        // 仓库自带 app.ico：单帧 32×32 32bpp BMP
+        // 仓库自带 app.ico：多尺寸 BMP 帧（16–64），取最大帧
         let (w, h, pixels) = decode_largest_bmp32(ICON_BYTES).expect("应解析出 BMP32 帧");
-        assert_eq!((w, h), (32, 32));
-        assert_eq!(pixels.len(), 32 * 32 * 4);
+        assert!(w >= 48 && h >= 48, "最大帧 {w}x{h} 应 >= 48");
+        assert_eq!(pixels.len(), w as usize * h as usize * 4);
     }
 
     #[test]
