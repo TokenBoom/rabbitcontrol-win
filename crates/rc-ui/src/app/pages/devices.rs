@@ -88,6 +88,24 @@ impl App {
             }
             {
                 let sender = self.sender();
+                let item = widgets::find_menu_item(&row, "RowWolItem")?;
+                // #7 WOL：离线且被控端上报 wol_capable 才显示
+                let wol_visible = !online && device.wol_capable;
+                item.SetText(HSTRING::from("远程唤醒 (WOL)"))?;
+                as_ui_element(&item)?.SetVisibility(if wol_visible {
+                    windows::UI::Xaml::Visibility::Visible
+                } else {
+                    windows::UI::Xaml::Visibility::Collapsed
+                })?;
+                let id = device.device_id.clone();
+                let mac = device.device_id.clone();
+                item.Click(RoutedEventHandler::new(move |_, _| {
+                    sender.send(Event::Click(Action::WolWake(id.clone(), mac.clone())));
+                    Ok(())
+                }))?;
+            }
+            {
+                let sender = self.sender();
                 let item = widgets::find_menu_item(&row, "RowUnbindItem")?;
                 let id = device.device_id.clone();
                 item.Click(RoutedEventHandler::new(move |_, _| {

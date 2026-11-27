@@ -30,7 +30,7 @@ pub fn find_menu_item(root: &FrameworkElement, name: &str) -> Result<MenuFlyoutI
 
 /// 设备行模板。内部命名控件：
 /// `RowName`/`RowCode`/`RowDot`/`RowState`/`RowLocal`/`RowLan`/
-/// `RowConnect`/`RowMore`/`RowFavItem`/`RowRenameItem`/`RowUnbindItem`。
+/// `RowConnect`/`RowMore`/`RowFavItem`/`RowRenameItem`/`RowUnbindItem`/`RowWolItem`。
 pub const DEVICE_ROW_XAML_STR: &str = r##"<Border
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -70,6 +70,7 @@ pub const DEVICE_ROW_XAML_STR: &str = r##"<Border
             <MenuFlyoutItem x:Name="RowFavItem" Text="收藏 / 取消收藏"/>
             <MenuFlyoutItem x:Name="RowRenameItem" Text="重命名"/>
             <MenuFlyoutItem x:Name="RowUnbindItem" Text="解除绑定"/>
+            <MenuFlyoutItem x:Name="RowWolItem" Text="远程唤醒 (WOL)" Visibility="Collapsed"/>
           </MenuFlyout>
         </Button.Flyout>
       </Button>

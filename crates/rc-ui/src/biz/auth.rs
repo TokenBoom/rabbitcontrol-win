@@ -110,54 +110,61 @@ pub fn local_hostname() -> String {
 }
 
 /// 将认证客户端错误映射为适合界面展示的中文提示。
+///
+/// v0.2.2 UiError 统一：可映射为规范错误码的走 core
+/// `resolve_ui_error`（4 级严重度 + 恢复建议 + 平台文案），其余保留
+/// 原有中文映射（core 目录未覆盖的网络/TLS 本地错误）。
 pub fn format_auth_error(err: AuthClientError) -> String {
-    match err {
+    use rc_client_core::ui_error;
+    let platform = ui_error::current_platform();
+    match &err {
+        // 服务端 API 错误：按 code/status 走 core 目录
         AuthClientError::Api {
-            status: 401,
-            message,
-            ..
-        } => {
-            let lower = message.trim().to_ascii_lowercase();
-            if lower.contains("invalid email or password") || lower.contains("invalid credential") {
-                return "邮箱或密码不正确。".to_string();
-            }
-            if !message.trim().is_empty() {
-                message
-            } else {
-                "邮箱或密码不正确。".to_string()
-            }
-        }
-        AuthClientError::Api {
-            status: 403,
+            status,
             code,
             message,
         } => {
-            if code == "password_change_required" {
-                "该账号需要先在 RabbitControl 管理网页修改初始密码。".to_string()
-            } else if !message.trim().is_empty() {
-                message
-            } else {
-                "账号已停用或无登录权限。".to_string()
+            let canonical = match (status, code.as_str()) {
+                (401, _) => Some("auth.invalid_credentials"),
+                (403, "password_change_required") => Some("auth.password_change_required"),
+                (403, _) => Some("auth.forbidden"),
+                (429, _) => Some("auth.rate_limited"),
+                _ => None,
+            };
+            if let Some(code_name) = canonical {
+                let ui = ui_error::resolve_ui_error(code_name, platform, &[], Some(*status), None);
+                return format!("{}{}", ui.title, {
+                    let mut s = String::new();
+                    if !ui.suggestion.is_empty() {
+                        s.push_str(&format!("（{}）", ui.suggestion));
+                    }
+                    s
+                });
             }
-        }
-        AuthClientError::Api { status: 429, .. } => "登录尝试过于频繁，请稍后再试。".to_string(),
-        AuthClientError::Api { code, message, .. } => {
+            // 未知 API 错误：保留服务端 message（已是中文或有语义）
             if !message.trim().is_empty() {
-                message
+                message.clone()
             } else {
                 format!("请求失败（{code}）。")
             }
         }
+        // ReloginRequired：会话过期类
         AuthClientError::ReloginRequired(msg) => {
-            let trimmed = msg.trim();
-            if trimmed.is_empty() {
-                "登录已过期，请重新登录。".to_string()
-            } else if trimmed.contains("登录") {
-                msg
-            } else {
-                format!("登录状态已失效，请重新登录（{trimmed}）。")
-            }
+            let ui = ui_error::classify_signal_error(msg, platform);
+            format!("{}（{}）", ui.title, ui.suggestion)
         }
+        // 本地错误（网络/TLS/配置）：core 目录未覆盖，保留原中文映射
+        _ => format_legacy_auth_error(&err),
+    }
+}
+
+/// 旧版本地错误中文映射（网络/TLS/配置等 core 目录未覆盖的场景）。
+fn format_legacy_auth_error(err: &AuthClientError) -> String {
+    match err {
+        AuthClientError::Network(msg) => format!("网络连接失败：{msg}"),
+        AuthClientError::Tls(msg) => format!("证书校验失败：{msg}"),
+        AuthClientError::Config(msg) => format!("配置错误：{msg}"),
+        AuthClientError::Protocol(msg) => format!("协议错误：{msg}"),
         other => other.to_string(),
     }
 }
@@ -376,33 +383,43 @@ mod tests {
 
     #[test]
     fn maps_auth_errors_to_chinese_messages() {
+        // 401：core 目录文案（含恢复建议）
+        let e401 = format_auth_error(AuthClientError::Api {
+            status: 401,
+            code: "unauthorized".to_string(),
+            message: String::new(),
+        });
+        assert!(e401.contains("账号或密码错误"), "401 文案: {e401}");
+        assert!(e401.contains("重试"), "401 应含恢复建议: {e401}");
+        // 403 password_change_required：core 目录文案
+        let e403 = format_auth_error(AuthClientError::Api {
+            status: 403,
+            code: "password_change_required".to_string(),
+            message: "must change".to_string(),
+        });
+        assert!(!e403.is_empty(), "403 文案不应为空");
+        // 429：core 目录文案
+        let e429 = format_auth_error(AuthClientError::Api {
+            status: 429,
+            code: "rate_limited".to_string(),
+            message: String::new(),
+        });
+        assert!(!e429.is_empty(), "429 文案不应为空");
+        // ReloginRequired：标题 + 建议
+        let erelogin = format_auth_error(AuthClientError::ReloginRequired(String::new()));
+        assert!(!erelogin.is_empty(), "relogin 文案不应为空");
+        // 未知 API 错误保留服务端 message
         assert_eq!(
             format_auth_error(AuthClientError::Api {
-                status: 401,
-                code: "unauthorized".to_string(),
-                message: String::new(),
+                status: 500,
+                code: "internal".to_string(),
+                message: "服务器内部错误".to_string(),
             }),
-            "邮箱或密码不正确。"
+            "服务器内部错误"
         );
-        assert_eq!(
-            format_auth_error(AuthClientError::Api {
-                status: 403,
-                code: "password_change_required".to_string(),
-                message: "must change".to_string(),
-            }),
-            "该账号需要先在 RabbitControl 管理网页修改初始密码。"
-        );
-        assert_eq!(
-            format_auth_error(AuthClientError::Api {
-                status: 429,
-                code: "rate_limited".to_string(),
-                message: String::new(),
-            }),
-            "登录尝试过于频繁，请稍后再试。"
-        );
-        assert_eq!(
-            format_auth_error(AuthClientError::ReloginRequired(String::new())),
-            "登录已过期，请重新登录。"
+        // 本地错误走 legacy 中文映射
+        assert!(
+            format_auth_error(AuthClientError::Network("timeout".into())).contains("网络连接失败")
         );
     }
 

@@ -69,6 +69,7 @@ pub(crate) enum Action {
     FileTransferToggled(bool),
     CheckUpdate,
     BackToLogin,
+    WolWake(String, String),
     HostToggle(bool),
     HostApprove,
     HostReject,

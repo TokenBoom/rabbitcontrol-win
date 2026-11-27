@@ -1190,6 +1190,17 @@ impl App {
                 self.set_visible("LoginView", false)?;
                 self.set_visible("ServerSettingsView", true)
             }
+            Action::WolWake(_device_id, mac) => {
+                // #7 WOL：向设备 MAC 发 magic packet（LAN 广播地址）
+                match crate::biz::wol::wake(&mac, &[]) {
+                    Ok(n) => self.label(
+                        "DevicesEmpty",
+                        &format!("唤醒包已发送到 {n} 个地址，等待设备上线…"),
+                    )?,
+                    Err(err) => self.label("DevicesEmpty", &format!("唤醒失败：{err}"))?,
+                }
+                Ok(())
+            }
             Action::BackToLogin => {
                 // 导航操作：解除 busy（restore 卡住时仍可返回登录页重试）
                 self.set_busy(false)?;
