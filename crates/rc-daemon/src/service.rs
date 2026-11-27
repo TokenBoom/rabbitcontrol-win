@@ -16,7 +16,7 @@ use windows::Win32::Foundation::{CloseHandle, ERROR_SERVICE_DOES_NOT_EXIST, HAND
 use windows::Win32::System::Environment::{CreateEnvironmentBlock, DestroyEnvironmentBlock};
 use windows::Win32::System::RemoteDesktop::{WTSGetActiveConsoleSessionId, WTSQueryUserToken};
 use windows::Win32::System::Services::*;
-use windows::Win32::System::Threading::CreateProcessAsUserW;
+use windows::Win32::System::Threading::{CreateProcessAsUserW, GetExitCodeProcess};
 
 use crate::pipe::PipeServer;
 use crate::protocol::{parse_request, render_response, Request, Response};
@@ -216,9 +216,16 @@ fn supervise_sessions(stop: &AtomicBool) {
 /// 确保活动会话内有 agent 在跑（已有则跳过）。
 fn ensure_agent(session_id: u32) {
     {
-        let guard = AGENT_PROCESS.lock().expect("agent 锁");
-        if guard.is_some() {
-            return;
+        // 已有受管 agent：仍在运行则跳过；已退出（崩溃/被用户关闭）则回收句柄后重新拉起
+        let mut guard = AGENT_PROCESS.lock().expect("agent 锁");
+        if let Some(raw) = *guard {
+            if agent_alive(raw) {
+                return;
+            }
+            unsafe {
+                let _ = CloseHandle(HANDLE(raw as *mut core::ffi::c_void));
+            }
+            *guard = None;
         }
     }
     unsafe {
@@ -267,6 +274,16 @@ fn ensure_agent(session_id: u32) {
             let _ = CloseHandle(process_info.hThread);
             *AGENT_PROCESS.lock().expect("agent 锁") = Some(process_info.hProcess.0 as isize);
         }
+    }
+}
+
+/// 受管 agent 进程是否仍在运行（`GetExitCodeProcess == STILL_ACTIVE`）。
+fn agent_alive(raw: isize) -> bool {
+    let handle = HANDLE(raw as *mut core::ffi::c_void);
+    let mut code = 0u32;
+    unsafe {
+        GetExitCodeProcess(handle, &mut code).is_ok()
+            && code == windows::Win32::Foundation::STILL_ACTIVE.0 as u32
     }
 }
 
