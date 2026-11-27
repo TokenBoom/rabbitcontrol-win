@@ -63,11 +63,14 @@ impl SignalRuntime {
 
     /// 登录/恢复会话后同步：停掉旧信令与 LAN 发现，按当前服务器配置重建。
     ///
-    /// 返回新代数；服务器未配置时同样成功（信令保持 Disabled 态，
-    /// `snapshot` 可探测到）。
+    /// 返回新代数；服务器未配置时同样成功（信令保持 Disabled 态、不启动
+    /// 局域网发现，`snapshot` 可探测到）。
     pub fn sync(&self) -> Result<u64, String> {
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let cfg = self.manager.server_config();
+        // 与 core 信令客户端判定「启用」的条件一致：不满足时信令本就不建连。
+        let server_configured =
+            cfg.enabled && !cfg.server_host.trim().is_empty() && cfg.signal_port != 0;
         let manager = Arc::clone(&self.manager);
 
         let token_provider: TokenProvider = Arc::new(move || {
@@ -106,15 +109,21 @@ impl SignalRuntime {
             |_| {},
         );
         inner.signal = Some(signal);
-        // LAN 发现：随机实例 ID 每进程唯一即可（对端按实例 ID 去重展示）。
-        let instance_id: u64 = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
-        inner.lan = Some(LanDiscoveryHandle::spawn(
-            instance_id,
-            auth::local_hostname(),
-        ));
+        // 局域网发现只在服务器已配置时启动。发现线程一起来就绑定 UDP
+        // `0.0.0.0:19999`——服务器未配置时它没有任何用处，却会让 Windows
+        // 防火墙为每个新编译出的程序（包括 `cargo test` 的测试程序）弹一次
+        // 「允许入站连接」确认。
+        if server_configured {
+            // 随机实例 ID 每进程唯一即可（对端按实例 ID 去重展示）。
+            let instance_id: u64 = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            inner.lan = Some(LanDiscoveryHandle::spawn(
+                instance_id,
+                auth::local_hostname(),
+            ));
+        }
         Ok(generation)
     }
 
@@ -243,6 +252,11 @@ mod tests {
     use rc_client_core::cert_manager::CertManager;
     use rc_client_core::server_config::ServerConfig;
 
+    // 约定：这里的单测不得打开任何监听套接字。`cargo test` 的测试程序放在
+    // 带哈希的路径下，依赖一变路径就变，而 Windows 防火墙对每个新路径的程序
+    // 第一次监听端口都会弹一次「允许入站连接」确认——一个绑定 UDP 的单测
+    // 等于让每次改动都弹一次窗。
+
     /// 在临时目录构造认证运行时（服务器未配置），保证单测不触碰真实用户配置。
     fn test_runtime(tag: &str) -> (SignalRuntime, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!("rc-win-runtime-{tag}-{}", std::process::id()));
@@ -275,6 +289,14 @@ mod tests {
         let gen1 = runtime.sync().expect("sync 失败");
         assert_eq!(gen1, gen0 + 1);
         assert!(runtime.snapshot().is_some());
+        // 服务器未配置：信令已建但保持 Disabled，且不得启动局域网发现
+        // （它会绑定 UDP 监听，见 `sync` 的说明）
+        {
+            let inner = runtime.inner.lock().expect("信令运行时锁");
+            assert!(inner.signal.is_some());
+            assert!(inner.lan.is_none(), "服务器未配置时不应启动局域网发现");
+        }
+        assert!(runtime.lan_peers().is_empty());
         runtime.stop();
         assert_eq!(runtime.generation(), gen1 + 1);
         assert!(runtime.snapshot().is_none());
