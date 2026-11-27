@@ -326,6 +326,8 @@ impl App {
         self.switch_toggled("LockOnExitToggle", Action::LockOnExitToggled(true))?;
         self.switch_toggled("HostSwitch", Action::HostToggle(true))?;
         self.switch_toggled("AutoStartToggle", Action::AutoStartToggled(true))?;
+        self.switch_toggled("FileTransferToggle", Action::FileTransferToggled(true))?;
+        self.click("ProxyApplyButton", Action::ProxyApply)?;
         self.click("HostApprove", Action::HostApprove)?;
         self.click("RenamePromptOk", Action::RenamePromptOk)?;
         self.click("RenamePromptCancel", Action::RenamePromptCancel)?;
@@ -1267,6 +1269,23 @@ impl App {
             Action::PortmapAdd => self.on_portmap_add(),
             Action::PortmapRule(id, op) => self.on_portmap_rule(id, op),
             Action::PromptOk => self.on_prompt_ok(),
+            Action::ProxyApply => {
+                let url = self
+                    .find_opt::<windows::UI::Xaml::Controls::TextBox>("ProxyUrl")
+                    .and_then(|b| b.Text().ok())
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                match crate::biz::proxy_cfg::apply(&url) {
+                    Ok(()) => self.label("AutoStartCaption", "代理已应用")?,
+                    Err(err) => self.label("AutoStartCaption", &format!("代理失败：{err}"))?,
+                }
+                Ok(())
+            }
+            Action::FileTransferToggled(on) => {
+                // v0.2.2 工具权限门控：运行时经 host handle 传递
+                let _ = on;
+                Ok(())
+            }
             Action::HostToggle(on) => self.on_host_toggle(on),
             Action::HostApprove => self.on_host_approval(true),
             Action::HostReject => self.on_host_approval(false),

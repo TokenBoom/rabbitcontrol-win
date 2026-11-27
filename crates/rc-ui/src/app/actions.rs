@@ -65,6 +65,8 @@ pub(crate) enum Action {
     PortmapRule(u64, u8),
     PromptOk,
     PromptCancel,
+    ProxyApply,
+    FileTransferToggled(bool),
     HostToggle(bool),
     HostApprove,
     HostReject,

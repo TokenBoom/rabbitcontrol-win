@@ -349,6 +349,24 @@
                   <ToggleSwitch x:Name="EncryptToggle" Grid.Column="1" OnContent="" OffContent="" Margin="0"/>
                 </Grid>
               </Border>
+              <TextBlock Text="出站代理" Style="{StaticResource CaptionText}" Margin="0,10,0,4"/>
+              <Border Style="{StaticResource SettingRowBorder}">
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                  </Grid.ColumnDefinitions>
+                  <StackPanel Spacing="2">
+                    <TextBlock Text="SOCKS5 / HTTP 代理" Style="{StaticResource BodyText}"/>
+                    <TextBlock Text="填代理地址（如 socks5://127.0.0.1:1080），留空直连；REST/信令/中继自动走代理" Style="{StaticResource CaptionText}" TextWrapping="Wrap"/>
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                    <TextBox x:Name="ProxyUrl" Width="180" Height="32" FontSize="12"
+                             PlaceholderText="socks5://host:port"/>
+                    <Button x:Name="ProxyApplyButton" Content="应用" Style="{StaticResource SecondaryButton}" Height="32"/>
+                  </StackPanel>
+                </Grid>
+              </Border>
               <TextBlock Text="关于" Style="{StaticResource CaptionText}" Margin="0,10,0,4"/>
               <Border Style="{StaticResource SettingRowBorder}">
                 <Grid>
@@ -391,6 +409,19 @@
                     <TextBlock Text="临时验证码（每次远控结束轮换）· 自定义密码 · 密码通过自动接受" Style="{StaticResource CaptionText}" TextWrapping="Wrap"/>
                   </StackPanel>
                   <Button x:Name="HostVerifyButton" Grid.Column="1" Content="接通后可用" Style="{StaticResource SecondaryButton}" IsEnabled="False"/>
+                </Grid>
+              </Border>
+              <Border Style="{StaticResource SettingRowBorder}">
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                  </Grid.ColumnDefinitions>
+                  <StackPanel Spacing="2">
+                    <TextBlock Text="允许文件互传" Style="{StaticResource BodyText}"/>
+                    <TextBlock Text="被控会话中允许对端通过工具通道传输文件" Style="{StaticResource CaptionText}"/>
+                  </StackPanel>
+                  <ToggleSwitch x:Name="FileTransferToggle" Grid.Column="1" OnContent="" OffContent="" Margin="0"/>
                 </Grid>
               </Border>
             </StackPanel>
