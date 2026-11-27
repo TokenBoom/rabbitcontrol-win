@@ -68,6 +68,7 @@ pub(crate) enum Action {
     ProxyApply,
     FileTransferToggled(bool),
     CheckUpdate,
+    BackToLogin,
     HostToggle(bool),
     HostApprove,
     HostReject,

@@ -33,13 +33,12 @@ use windows::UI::Xaml::Controls::SwapChainPanel;
 use windows::UI::Xaml::Input::PointerEventHandler;
 
 /// 全局禁用控件清单（busy 态）；缺失的条目自动跳过。
-const BUSY_CONTROLS: [&str; 12] = [
+const BUSY_CONTROLS: [&str; 11] = [
     "SignIn",
     "Email",
     "Password",
     "Origin",
     "SaveServer",
-    "BackToLogin",
     "RefreshDevices",
     "ConnectPeerButton",
     "PeerCodeBox",
@@ -332,6 +331,7 @@ impl App {
         self.switch_toggled("AutoStartToggle", Action::AutoStartToggled(true))?;
         self.switch_toggled("FileTransferToggle", Action::FileTransferToggled(true))?;
         self.click("ProxyApplyButton", Action::ProxyApply)?;
+        self.click("BackToLogin", Action::BackToLogin)?;
         self.click("CheckUpdateButton", Action::CheckUpdate)?;
         self.click("HostApprove", Action::HostApprove)?;
         self.click("RenamePromptOk", Action::RenamePromptOk)?;
@@ -1181,12 +1181,20 @@ impl App {
         match action {
             Action::Login => self.start_login(),
             Action::OpenServerSettings => {
+                // 导航操作：解除 busy（启动 restore 卡住时用户仍可查看/修改服务器设置）
+                self.set_busy(false)?;
                 let origin = settings::editable_origin(&self.auth.server_config());
                 self.find::<TextBox>("Origin")?
                     .SetText(HSTRING::from(&origin))?;
                 self.label("SettingsError", "")?;
                 self.set_visible("LoginView", false)?;
                 self.set_visible("ServerSettingsView", true)
+            }
+            Action::BackToLogin => {
+                // 导航操作：解除 busy（restore 卡住时仍可返回登录页重试）
+                self.set_busy(false)?;
+                self.set_visible("LoginView", true)?;
+                self.set_visible("ServerSettingsView", false)
             }
             Action::SaveServer => self.save_server_settings(),
             Action::ProbeServer => self.save_server_settings(),
