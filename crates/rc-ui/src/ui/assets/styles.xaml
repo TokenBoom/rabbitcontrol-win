@@ -65,6 +65,7 @@
   </Style>
 
   <!-- 按钮 -->
+  <!-- 主按钮：自定义模板锁定品牌色（内置模板 PointerOver 会用系统灰覆盖背景） -->
   <Style x:Key="PrimaryButton" TargetType="Button">
     <Setter Property="Height" Value="40"/>
     <Setter Property="Padding" Value="20,0"/>
@@ -73,7 +74,47 @@
     <Setter Property="Foreground" Value="{ThemeResource TextOnPrimaryBrush}"/>
     <Setter Property="BorderThickness" Value="0"/>
     <Setter Property="FontWeight" Value="SemiBold"/>
-    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Grid>
+            <VisualStateManager.VisualStateGroups>
+              <VisualStateGroup x:Name="CommonStates">
+                <VisualState x:Name="Normal"/>
+                <VisualState x:Name="PointerOver">
+                  <Storyboard>
+                    <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Bg" Storyboard.TargetProperty="Background">
+                      <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource PrimaryHoverBrush}"/>
+                    </ObjectAnimationUsingKeyFrames>
+                  </Storyboard>
+                </VisualState>
+                <VisualState x:Name="Pressed">
+                  <Storyboard>
+                    <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Bg" Storyboard.TargetProperty="Background">
+                      <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource PrimaryPressedBrush}"/>
+                    </ObjectAnimationUsingKeyFrames>
+                  </Storyboard>
+                </VisualState>
+                <VisualState x:Name="Disabled">
+                  <Storyboard>
+                    <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Bg" Storyboard.TargetProperty="Background">
+                      <DiscreteObjectKeyFrame KeyTime="0" Value="#B0BCCB"/>
+                    </ObjectAnimationUsingKeyFrames>
+                    <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Content" Storyboard.TargetProperty="Foreground">
+                      <DiscreteObjectKeyFrame KeyTime="0" Value="#EEF2F7"/>
+                    </ObjectAnimationUsingKeyFrames>
+                  </Storyboard>
+                </VisualState>
+              </VisualStateGroup>
+            </VisualStateManager.VisualStateGroups>
+            <Border x:Name="Bg" Background="{TemplateBinding Background}" CornerRadius="{TemplateBinding CornerRadius}">
+              <ContentPresenter x:Name="Content" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                Margin="{TemplateBinding Padding}"/>
+            </Border>
+          </Grid>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
   </Style>
   <Style x:Key="SecondaryButton" TargetType="Button">
     <Setter Property="Height" Value="36"/>
