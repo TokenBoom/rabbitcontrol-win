@@ -10,6 +10,7 @@
 //! - [`agent_ipc`]：主界面 ↔ 后台被控进程的命名管道协议；
 //! - [`named_pipe`]：命名管道服务端的通用骨架（守护服务与后台进程共用）；
 //! - [`trace_log`]：内部事件日志开关（环境变量 `RC_TRACE`，诊断用）。
+//! - [`share_code`]：「复制并分享」的文案与设备码的 3-3-3 显示格式；
 //!
 //! 本 crate 不引用任何 UI 框架；可单测。
 
@@ -23,5 +24,6 @@ pub mod daemon_ipc;
 pub mod host;
 pub mod named_pipe;
 pub mod p2p_port_lease;
+pub mod share_code;
 pub mod signal_runtime;
 pub mod trace_log;

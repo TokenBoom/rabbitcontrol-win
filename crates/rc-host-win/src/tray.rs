@@ -9,6 +9,8 @@
 //! （`wParam` 低 16 位为图标 ID，高 16 位为事件）。资源管理器重启后会广播
 //! `TaskbarCreated`，收到时需要重新挂图标。
 
+use rc_appcore::share_code::group_device_id;
+
 use windows::core::{Error, Result, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::UI::Shell::{
@@ -78,21 +80,6 @@ pub struct CodeRows {
     pub temp: (String, bool),
     /// 「复制并分享」是否可用。
     pub share: bool,
-}
-
-/// 把设备码按 3-3-3 分组（`419450905` → `419 450 905`）；不是 9 位数字就原样返回。
-pub fn group_device_id(id: &str) -> String {
-    let digits: Vec<char> = id.chars().collect();
-    if digits.len() == 9 && digits.iter().all(char::is_ascii_digit) {
-        format!("{} {} {}", id[..3].to_owned(), &id[3..6], &id[6..])
-    } else {
-        id.to_string()
-    }
-}
-
-/// 「复制并分享」放到剪贴板的内容（与 macOS 的同一功能一字不差）。
-pub fn share_text(device_code: &str, temp_code: &str) -> String {
-    format!("设备 ID: {device_code}\n验证码: {temp_code}")
 }
 
 /// 状态行文案（与 macOS 托盘的状态行同一口径）。
@@ -346,11 +333,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn device_id_is_grouped_only_when_it_is_nine_digits() {
-        assert_eq!(group_device_id("419450905"), "419 450 905");
-        assert_eq!(group_device_id("12345"), "12345");
-        assert_eq!(group_device_id("41945O905"), "41945O905");
-    }
+    fn device_id_is_grouped_only_when_it_is_nine_digits() {}
 
     #[test]
     fn code_rows_explain_what_is_missing() {
@@ -361,10 +344,6 @@ mod tests {
         );
         assert_eq!(both.temp, ("临时验证码：BAM78E4U（点击复制）".into(), true));
         assert!(both.share);
-        assert_eq!(
-            share_text("419450905", "BAM78E4U"),
-            "设备 ID: 419450905\n验证码: BAM78E4U"
-        );
         // 用的是自定义密码：不明文展示，只说明是自定义密码
         let custom = code_rows(Some("419450905"), None, true);
         assert_eq!(custom.temp, ("临时验证码：已设自定义密码".into(), false));

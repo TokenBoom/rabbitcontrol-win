@@ -494,7 +494,7 @@ fn on_tray_menu(state: &UiState, hwnd: HWND, at: (i32, i32)) {
         }
         TrayCommand::CopyShareText => copy_and_notify(
             "设备 ID 与验证码",
-            &tray::share_text(
+            &rc_appcore::share_code::share_text(
                 snapshot.device_id.as_deref().unwrap_or_default(),
                 snapshot.temp_code.as_deref().unwrap_or_default(),
             ),

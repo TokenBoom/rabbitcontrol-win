@@ -59,11 +59,19 @@ impl AgentState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    /// 每个测试一个自己的临时目录：默认线程数下两个测试并行跑，共用一个目录会互相删文件。
+    fn state_dir(test: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("rc-appcore-state-{test}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
 
     #[test]
     fn missing_or_broken_file_means_disabled() {
-        let dir = std::env::temp_dir().join(format!("rc-appcore-state-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = state_dir("broken");
         assert_eq!(
             AgentState::load_from(&dir.join("agent.json")),
             AgentState::default()
@@ -76,8 +84,7 @@ mod tests {
 
     #[test]
     fn roundtrip_and_tolerant_unknown_fields() {
-        let dir = std::env::temp_dir().join(format!("rc-appcore-state-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = state_dir("roundtrip");
         let path = dir.join("agent.json");
         AgentState::save_to(&path, &AgentState { host_enabled: true }).expect("保存");
         assert!(AgentState::load_from(&path).host_enabled);
