@@ -93,10 +93,13 @@ pub(crate) enum Event {
     LogoutFinished(std::result::Result<(), String>),
     SaveServerFinished(std::result::Result<(), String>),
     DevicesFinished(std::result::Result<Vec<MyDeviceInfo>, String>),
+    /// 静默刷新设备列表的结果（信令重新连上 / 回到前台时触发；不置忙碌，失败不打扰）。
+    DevicesRefreshed(std::result::Result<Vec<MyDeviceInfo>, String>),
     DeviceActionFinished(std::result::Result<(), String>),
     SessionLaunched(Box<SessionLaunchOutcome>, String, String),
     SessionPointer(SessionPointerEvent),
     SessionKey(SessionKeyEvent),
+    Terminal(TerminalEvent),
     HostStarted(std::result::Result<rc_appcore::host::StartedHost, String>),
     AutoStartFinished(std::result::Result<bool, String>),
     UpdateCheckFinished(std::result::Result<String, String>),

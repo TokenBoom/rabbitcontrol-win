@@ -71,6 +71,13 @@ pub struct App {
     prefs: Mutex<AppPrefs>,
     busy: bool,
     logged_in: bool,
+    /// 设备列表正在后台拉取（忙碌的与静默的共用一个在途标记，避免重复请求）。
+    devices_refreshing: bool,
+    /// 上次拿到设备列表的 tick：回到前台时按冷却时间决定要不要再刷。
+    devices_refreshed_tick: Option<u64>,
+    /// 上次看到的信令在线状态与本机设备码：两者之一变了就重新拉设备列表。
+    signal_online: bool,
+    signal_device_id: Option<String>,
     page: Page,
     devices: Vec<MyDeviceInfo>,
     online_override: std::collections::HashMap<String, bool>,
@@ -195,6 +202,10 @@ impl App {
             prefs: Mutex::new(prefs),
             busy: false,
             logged_in: false,
+            devices_refreshing: false,
+            devices_refreshed_tick: None,
+            signal_online: false,
+            signal_device_id: None,
             page: Page::Devices,
             devices: Vec::new(),
             online_override: std::collections::HashMap::new(),
@@ -808,6 +819,10 @@ impl App {
             self.last_dpi = dpi;
             self.apply_scale()?;
         }
+        // 主窗口回到前台：设备列表超过冷却时间没刷过就静默刷一遍（与 macOS 端一致）
+        if crate::ui::shell::take_foreground_gained() && self.logged_in {
+            self.refresh_devices_if_stale()?;
+        }
         while let Ok(event) = self.inbox.try_recv() {
             eprintln!("[dispatch] processing event...");
             match event {
@@ -856,18 +871,17 @@ impl App {
                         }
                     }
                 }
+                Event::DevicesRefreshed(result) => {
+                    self.devices_refreshing = false;
+                    if let Ok(devices) = result {
+                        self.install_devices(devices)?;
+                    }
+                }
                 Event::DevicesFinished(result) => {
                     self.set_busy(false)?;
+                    self.devices_refreshing = false;
                     match result {
-                        Ok(mut devices) => {
-                            // 服务端偶发重复条目时按设备码去重（快照防御）。
-                            devices.sort_by(|a, b| a.device_id.cmp(&b.device_id));
-                            devices.dedup_by(|a, b| a.device_id == b.device_id);
-                            self.devices = devices;
-                            // 不清 online_override：实时事件可能比 REST 快照更新。
-                            self.render_devices()?;
-                            self.render_favorites()?;
-                        }
+                        Ok(devices) => self.install_devices(devices)?,
                         Err(message) => {
                             if !self.auth.is_logged_in() {
                                 self.return_to_login(message)?;
@@ -1404,6 +1418,7 @@ impl App {
             Action::RefreshDevices => {
                 if self.logged_in {
                     self.set_busy(true)?;
+                    self.devices_refreshing = true;
                     let manager = self.auth.manager();
                     let events = self.sender();
                     thread::spawn(move || {

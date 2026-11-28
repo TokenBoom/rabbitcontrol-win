@@ -1,4 +1,7 @@
-//! 我的设备页：列表渲染与行操作。
+//! 我的设备页：列表渲染、行操作，以及设备列表的刷新时机
+//! （信令重新连上 / 本机设备码变化 / 窗口回到前台且超过冷却时间——与 macOS 端一致）。
+
+use std::thread;
 
 use super::{super::actions::*, super::App};
 use windows::core::Result;
@@ -12,11 +15,68 @@ use windows::UI::Xaml::{
 };
 
 use crate::app::{as_ui_element, panel_children};
+use crate::biz::auth;
 use crate::ui::widgets;
 use rc_client_core::auth_client::MyDeviceInfo;
 use rc_client_core::server_config;
 
+/// 回到前台后多久之内不再重复刷新设备列表（tick × 50ms = 30 秒）。
+const DEVICES_FOREGROUND_COOLDOWN_TICKS: u64 = 600;
+
 impl App {
+    /// 把服务端返回的设备列表装进界面（按设备码去重：服务端偶发重复条目）。
+    pub(crate) fn install_devices(&mut self, mut devices: Vec<MyDeviceInfo>) -> Result<()> {
+        devices.sort_by(|a, b| a.device_id.cmp(&b.device_id));
+        devices.dedup_by(|a, b| a.device_id == b.device_id);
+        self.devices = devices;
+        self.devices_refreshed_tick = Some(self.tick);
+        // 不清 online_override：实时事件可能比 REST 快照更新。
+        self.render_devices()?;
+        self.render_favorites()
+    }
+
+    /// 静默刷新设备列表：不置忙碌、失败不打扰。信令重新连上 / 窗口回到前台时用。
+    pub(crate) fn refresh_devices_silently(&mut self) -> Result<()> {
+        if !self.logged_in || self.devices_refreshing {
+            return Ok(());
+        }
+        self.devices_refreshing = true;
+        let manager = self.auth.manager();
+        let events = self.sender();
+        thread::spawn(move || {
+            events.send(Event::DevicesRefreshed(auth::list_my_devices(&manager)));
+        });
+        Ok(())
+    }
+
+    /// 回到前台时用：距上次拿到设备列表不足 [`DEVICES_FOREGROUND_COOLDOWN_TICKS`]（30 秒）就不刷。
+    pub(crate) fn refresh_devices_if_stale(&mut self) -> Result<()> {
+        let stale = self.devices_refreshed_tick.map_or(true, |tick| {
+            self.tick.saturating_sub(tick) >= DEVICES_FOREGROUND_COOLDOWN_TICKS
+        });
+        if stale {
+            self.refresh_devices_silently()
+        } else {
+            Ok(())
+        }
+    }
+
+    /// 信令刚连上（或本机设备码变了）：设备列表以服务端为准重新拉一遍。
+    pub(crate) fn refresh_devices_on_signal(
+        &mut self,
+        online: bool,
+        device_id: Option<&str>,
+    ) -> Result<()> {
+        let reconnecting = online && !self.signal_online;
+        let id_changed = device_id != self.signal_device_id.as_deref();
+        self.signal_online = online;
+        self.signal_device_id = device_id.map(str::to_string);
+        if (reconnecting || id_changed) && device_id.is_some() {
+            self.refresh_devices_silently()?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn render_devices(&mut self) -> Result<()> {
         let local_id = self.auth.server_config().cached_device_id.clone();
         let host: StackPanel = self.find("DeviceListHost")?;

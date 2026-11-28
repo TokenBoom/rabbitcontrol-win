@@ -128,6 +128,9 @@ impl App {
         self.logged_in = false;
         self.devices.clear();
         self.online_override.clear();
+        self.signal_online = false;
+        self.signal_device_id = None;
+        self.devices_refreshing = false;
         self.set_visible("MainShell", false)?;
         self.set_visible("LoginOverlay", true)?;
         self.set_visible("LoginView", true)?;
@@ -209,6 +212,7 @@ impl App {
             None => "信令连接中…".to_string(),
         };
         self.label("StatusText", &state_text)?;
+        self.refresh_devices_on_signal(online, snapshot.device_id.as_deref())?;
         if let Some(id) = snapshot.device_id.as_deref() {
             self.label("LocalIdText", &server_config::format_device_id(id))?;
             if online && self.online_override.get(id) != Some(&true) {

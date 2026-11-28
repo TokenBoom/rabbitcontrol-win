@@ -1,6 +1,9 @@
 use std::{
     ptr,
-    sync::{mpsc, Arc},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    },
 };
 
 use windows::{
@@ -24,6 +27,14 @@ use windows::{
 };
 
 pub const UI_EVENT: u32 = WM_APP + 1;
+
+/// 主窗口回到过前台（`WM_ACTIVATE`）：App 每轮 dispatch 取走一次，用来做「回到前台刷新设备列表」。
+static FOREGROUND_GAINED: AtomicBool = AtomicBool::new(false);
+
+/// 取出并清除「主窗口回到前台」标记。
+pub fn take_foreground_gained() -> bool {
+    FOREGROUND_GAINED.swap(false, Ordering::SeqCst)
+}
 
 /// 设计基准逻辑尺寸（含标题栏）。布局按此坐标书写；窗口物理尺寸 =
 /// 逻辑尺寸 × DPI × 小屏适配系数（由 App 在 DPI 变化时重设）。
@@ -473,6 +484,13 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
         // DPI 变化：按新 DPI 重设窗口物理尺寸，并通知 App 重算根缩放。
         WM_DPICHANGED => {
             resize_to_design(hwnd, GetDpiForWindow(hwnd));
+            PostMessageW(hwnd, UI_EVENT, None, None);
+        }
+        // 回到前台：记一笔并唤醒 App（它按冷却时间决定要不要刷新设备列表）
+        WM_ACTIVATE => {
+            if w.0 & 0xffff != 0 {
+                FOREGROUND_GAINED.store(true, Ordering::SeqCst);
+            }
             PostMessageW(hwnd, UI_EVENT, None, None);
         }
         WM_CLOSE => PostQuitMessage(0),
