@@ -41,6 +41,9 @@ const WM_ENGINE_EVENTS: u32 = WM_APP + 0x10;
 const WM_ENGINE_STOPPED: u32 = WM_APP + 0x11;
 /// 审批窗倒计时的定时器 ID。
 const TIMER_APPROVAL: usize = 1;
+/// 一次性定时器：调试用，到点弹出托盘菜单。
+const TIMER_DEMO_TRAY_MENU: usize = 2;
+static DEMO_TRAY_MENU_AT: Mutex<Option<(i32, i32)>> = Mutex::new(None);
 /// 引擎驱动周期。
 const TICK: Duration = Duration::from_millis(100);
 
@@ -65,6 +68,8 @@ pub struct Hooks {
     pub after_user_quit: Box<dyn Fn() + Send + Sync>,
     /// 启动后弹一个演示审批窗（仅调试构建配合 `--demo-approval`）。
     pub demo_prompt: bool,
+    /// 调试：启动后在这个屏幕坐标弹出托盘菜单。
+    pub demo_tray_menu: Option<(i32, i32)>,
 }
 
 /// 界面线程侧的事件队列：其他线程往里放，再唤醒界面线程。
@@ -202,6 +207,12 @@ pub fn run(engine: Engine, hooks: Hooks) -> Result<(), String> {
     }
     if hooks.demo_prompt {
         show_demo_prompt();
+    }
+    if let Some(at) = hooks.demo_tray_menu {
+        // 调试：启动 1.2 秒后直接在给定屏幕坐标弹出托盘菜单（不经过任务栏），自动化测试用。
+        // 用一次性定时器把这件事排回窗口线程：托盘菜单必须在创建它的线程上弹。
+        *DEMO_TRAY_MENU_AT.lock().unwrap_or_else(|e| e.into_inner()) = Some(at);
+        unsafe { SetTimer(hwnd, TIMER_DEMO_TRAY_MENU, 1200, None) };
     }
 
     let mut message = MSG::default();
@@ -380,6 +391,17 @@ unsafe extern "system" fn agent_wndproc(
             LRESULT(0)
         }
         WM_TIMER => {
+            if wparam.0 == TIMER_DEMO_TRAY_MENU {
+                let _ = KillTimer(hwnd, TIMER_DEMO_TRAY_MENU);
+                if let Some(at) = DEMO_TRAY_MENU_AT
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take()
+                {
+                    on_tray_menu(state, hwnd, at);
+                }
+                return LRESULT(0);
+            }
             if wparam.0 == TIMER_APPROVAL && approval_window::tick_countdown() {
                 approval_window::hide();
             }

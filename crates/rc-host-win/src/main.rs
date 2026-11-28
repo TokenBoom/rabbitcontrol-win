@@ -9,7 +9,8 @@
 //! rc-host-agent --version           版本号
 //! ```
 //!
-//! 调试构建另支持 `--demo-approval`：启动后弹一个演示用的审批小窗。
+//! 调试构建另支持两个演示开关：`--demo-approval` 启动后弹一个演示用的审批小窗；
+//! `--demo-tray-menu X,Y` 启动后在屏幕坐标 (X, Y) 弹出托盘菜单。
 
 #![windows_subsystem = "windows"]
 
@@ -51,6 +52,11 @@ fn run(args: &[String]) -> Result<(), String> {
         diag_log!("主界面在运行（pid {pid}）：后台让位");
     }
     let demo_prompt = cfg!(debug_assertions) && args.iter().any(|arg| arg == "--demo-approval");
+    // `--demo-tray-menu X,Y`：启动后在屏幕坐标 (X, Y) 弹出托盘菜单（仅调试构建）
+    let demo_tray_menu = flag_value(args, "--demo-tray-menu").and_then(|value| {
+        let (x, y) = value.split_once(',')?;
+        Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+    });
     app::run(
         engine,
         Hooks {
@@ -62,6 +68,7 @@ fn run(args: &[String]) -> Result<(), String> {
                 }
             }),
             demo_prompt,
+            demo_tray_menu: cfg!(debug_assertions).then(|| demo_tray_menu).flatten(),
         },
     )
 }
