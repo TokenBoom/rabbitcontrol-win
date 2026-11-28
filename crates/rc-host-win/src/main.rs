@@ -23,6 +23,7 @@ fn main() {
         return;
     }
     diag::init(&diag::path());
+    rc_appcore::trace_log::init_to_file("RC_TRACE", &diag::path());
     diag_log!(
         "rc-host-agent {} 启动（pid {}，会话 {}）",
         env!("CARGO_PKG_VERSION"),

@@ -443,9 +443,14 @@ impl Engine {
                     self.pending_approval = None;
                     self.connected_peer = Some(remote_addr.clone());
                     events.push(EngineEvent::ApprovalResolved);
+                    diag_log!("远端已连接：{remote_addr}");
                     events.push(EngineEvent::SessionStarted { peer: remote_addr });
                 }
                 HostUpdate::ClientDisconnected { .. } => {
+                    diag_log!(
+                        "远端已断开：{}",
+                        self.connected_peer.clone().unwrap_or_default()
+                    );
                     self.connected_peer = None;
                     events.push(EngineEvent::SessionEnded);
                 }

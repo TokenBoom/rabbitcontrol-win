@@ -33,8 +33,8 @@ pub mod dxgi;
 pub mod probe;
 
 pub use dxgi::{
-    list_main_display_modes, main_display_backing_resolution, main_display_logical_resolution,
-    DisplayModePreset, DxgiBackend,
+    conversion_gpu_ms, list_main_display_modes, main_display_backing_resolution,
+    main_display_logical_resolution, relay_self_check, DisplayModePreset, DxgiBackend,
 };
 
 use rc_capture::CaptureBackend;
@@ -56,7 +56,11 @@ pub struct DxgiConfig {
 
 /// 构造 DXGI 采集后端（duplication 立即建立，失败上抛由平台层降级）。
 pub fn new_backend(cfg: DxgiConfig) -> Result<DxgiBackend> {
-    DxgiBackend::new(cfg)
+    let result = DxgiBackend::new(cfg);
+    if let Err(err) = &result {
+        eprintln!("[capture] DXGI 采集后端初始化失败：{err}");
+    }
+    result
 }
 
 /// 包装为 trait 对象 + 后端标签（平台 provider 使用）。

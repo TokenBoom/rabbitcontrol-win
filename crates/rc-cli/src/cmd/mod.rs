@@ -1,7 +1,12 @@
 //! rc-cli 子命令分发。
 
 mod auth_probe;
+mod capture_probe;
+mod conv_bench;
+mod hw_loop;
 mod loopback;
+mod power_probe;
+mod relay_check;
 
 use std::process::ExitCode;
 
@@ -21,7 +26,63 @@ pub struct Cli {
 pub enum Command {
     /// 探测硬件能力（采集/编解码/渲染/音频）。
     Probe,
-    /// 进程内采集→编码→解码→呈现回环压测（真实后端）。
+    /// 单独验证 DXGI 桌面复制能否产出画面帧（不经过会话管线）。
+    CaptureProbe {
+        /// 运行时长（秒）。
+        #[arg(long, default_value_t = 5)]
+        duration: u64,
+        /// 创建 duplication 后先静置多久再取帧（秒）。
+        #[arg(long, default_value_t = 0)]
+        settle: u64,
+    },
+    /// 合成帧 → 编码 → 解码 → 读回校验，单独验证编解码链路（不经过采集）。
+    HwLoop {
+        /// 分辨率宽。
+        #[arg(long, default_value_t = 1920)]
+        width: u32,
+        /// 分辨率高。
+        #[arg(long, default_value_t = 1080)]
+        height: u32,
+        /// 帧率。
+        #[arg(long, default_value_t = 30)]
+        fps: u32,
+        /// 帧数 = 帧率 × 秒数（上限 600 帧）。
+        #[arg(long, default_value_t = 3)]
+        seconds: u64,
+    },
+    /// 实测 BGRA → NV12 视频处理器转换（含缩放）的 GPU 耗时。
+    ConvBench {
+        /// 输入宽（桌面分辨率）。
+        #[arg(long, default_value_t = 3840)]
+        width: u32,
+        /// 输入高。
+        #[arg(long, default_value_t = 2160)]
+        height: u32,
+        /// 输出宽（编码分辨率）。
+        #[arg(long, default_value_t = 1920)]
+        out_width: u32,
+        /// 输出高。
+        #[arg(long, default_value_t = 1080)]
+        out_height: u32,
+        /// 连做多少次取平均。
+        #[arg(long, default_value_t = 60)]
+        iterations: u32,
+    },
+    /// 验证桌面采集的跨设备中转链路（采集专用设备 → 共享纹理 → 共享设备 → NV12）。
+    RelayCheck,
+    /// 验证显示器熄屏通知、熄屏唤醒与锁屏查询（被控端「没画面」时先查这里）。
+    PowerProbe {
+        /// 运行时长（秒）。
+        #[arg(long, default_value_t = 5)]
+        duration: u64,
+        /// 显示器熄屏时执行唤醒并保持常亮。
+        #[arg(long, default_value_t = false)]
+        wake: bool,
+        /// 无论熄屏与否都持有「显示器常亮 + 系统不眠」电源请求。
+        #[arg(long, default_value_t = false)]
+        hold: bool,
+    },
+    /// 进程内全链路回环（采集→编码→打包→解包→解码→呈现，Windows 真实后端）。
     Loopback {
         /// 运行时长（秒）。
         #[arg(long, default_value_t = 10)]
@@ -35,7 +96,10 @@ pub enum Command {
         /// 目标帧率。
         #[arg(long, default_value_t = 60)]
         fps: u32,
-        /// 严格模式（延迟不变式违例即失败）。
+        /// 采集源（auto = 桌面采集没挂起就用它，否则用合成帧）。
+        #[arg(long, value_enum, default_value_t = loopback::Source::Auto)]
+        source: loopback::Source,
+        /// 严格模式：必须用真实桌面采集，不允许退到合成帧。
         #[arg(long, default_value_t = false)]
         strict: bool,
     },
@@ -62,13 +126,39 @@ pub fn dispatch(cli: Cli) -> Result<ExitCode, String> {
             run_probe();
             Ok(ExitCode::SUCCESS)
         }
+        Command::CaptureProbe { duration, settle } => {
+            capture_probe::run(duration, settle).map(|()| ExitCode::SUCCESS)
+        }
+        Command::HwLoop {
+            width,
+            height,
+            fps,
+            seconds,
+        } => hw_loop::run(width, height, fps, seconds).map(|()| ExitCode::SUCCESS),
+        Command::ConvBench {
+            width,
+            height,
+            out_width,
+            out_height,
+            iterations,
+        } => conv_bench::run(width, height, out_width, out_height, iterations)
+            .map(|()| ExitCode::SUCCESS),
+        Command::RelayCheck => relay_check::run().map(|()| ExitCode::SUCCESS),
+        Command::PowerProbe {
+            duration,
+            wake,
+            hold,
+        } => power_probe::run(duration, wake, hold).map(|()| ExitCode::SUCCESS),
         Command::Loopback {
             duration,
             width,
             height,
             fps,
+            source,
             strict,
-        } => loopback::run(duration, width, height, fps, strict).map(|()| ExitCode::SUCCESS),
+        } => {
+            loopback::run(duration, width, height, fps, source, strict).map(|()| ExitCode::SUCCESS)
+        }
         Command::AuthProbe {
             origin,
             email,

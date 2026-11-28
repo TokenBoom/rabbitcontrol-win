@@ -16,7 +16,13 @@ rc-types.workspace = true
 rc-client-core.workspace = true
 rc-d3d11 = { path = "../rc-d3d11" }
 rc-capture-win = { path = "../rc-capture-win" }
+rc-win32core = { path = "../rc-win32core" }
+rc-capture.workspace = true
+rc-encode.workspace = true
+rc-decode.workspace = true
 rc-encode-mf = { path = "../rc-encode-mf" }
+rc-pipeline.workspace = true
+rc-trace.workspace = true
 rc-decode-mf = { path = "../rc-decode-mf" }
-rc-loopback.workspace = true
+windows.workspace = true
 clap = { version = "4", features = ["derive"] }

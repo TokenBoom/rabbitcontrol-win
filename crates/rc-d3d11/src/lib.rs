@@ -19,8 +19,8 @@ use windows::core::Interface;
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP};
 use windows::Win32::Graphics::Direct3D11::{
     D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11Multithread, ID3D11Texture2D,
-    D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
-    D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
+    D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+    D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12;
 
@@ -141,7 +141,60 @@ impl SharedDevice {
             .clone()
     }
 
-    /// 在共享设备上创建一张 NV12 纹理（解码输出落地 / 编码输入载体）。
+    /// 在共享设备所在的适配器上再开一个独立的 D3D11 设备（同样带多线程保护）。
+    ///
+    /// 它与共享设备各走各的上下文锁、各自的命令队列，只给需要**阻塞等待**的子系统用
+    /// （典型：DXGI 桌面复制的 `AcquireNextFrame`）。那种等待若发生在共享设备上，会把同设备上
+    /// 其它线程的 D3D11 调用一并卡住——硬件编码器 MFT 的线程首当其冲。
+    /// 两个设备之间传纹理用 [`SharedDevice::open_shared_texture`]。
+    pub fn open_isolated_device(&self) -> std::result::Result<ID3D11Device, String> {
+        let dxgi_device: windows::Win32::Graphics::Dxgi::IDXGIDevice =
+            self.device().cast().map_err(|e| e.to_string())?;
+        let adapter = unsafe { dxgi_device.GetAdapter() }
+            .map_err(|e| format!("取共享设备的适配器失败：{e}"))?;
+        let mut device = None;
+        let mut context = None;
+        unsafe {
+            D3D11CreateDevice(
+                &adapter,
+                windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_UNKNOWN,
+                windows::Win32::Foundation::HMODULE::default(),
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                Some(&[
+                    windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_11_0,
+                    windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_10_0,
+                ]),
+                D3D11_SDK_VERSION,
+                Some(&mut device),
+                None,
+                Some(&mut context),
+            )
+        }
+        .map_err(|e| format!("独立设备创建失败：{e}"))?;
+        let device = device.ok_or_else(|| "D3D11CreateDevice 未返回设备".to_string())?;
+        drop(context);
+        if let Ok(multithread) = device.cast::<ID3D11Multithread>() {
+            unsafe {
+                let _ = multithread.SetMultithreadProtected(true);
+            }
+        }
+        Ok(device)
+    }
+
+    /// 在共享设备上打开别的设备共享出来的纹理（对方以 `D3D11_RESOURCE_MISC_SHARED` 创建）。
+    ///
+    /// 共享纹理没有隐式的跨设备同步：读之前要确认对方已经写完（由调用方保证）。
+    pub fn open_shared_texture(
+        &self,
+        handle: windows::Win32::Foundation::HANDLE,
+    ) -> std::result::Result<ID3D11Texture2D, String> {
+        let mut texture = None;
+        unsafe { self.device().OpenSharedResource(handle, &mut texture) }
+            .map_err(|e| format!("打开共享纹理失败：{e}"))?;
+        texture.ok_or_else(|| "OpenSharedResource 未返回纹理".to_string())
+    }
+
+    /// 在共享设备上创建一张 NV12 纹理（解码输出落地 / 采集色彩转换输出 / 编码输入载体）。
     pub fn create_nv12_texture(
         &self,
         width: u32,
@@ -159,7 +212,8 @@ impl SharedDevice {
                 Quality: 0,
             },
             Usage: D3D11_USAGE_DEFAULT,
-            BindFlags: (D3D11_BIND_SHADER_RESOURCE).0 as u32,
+            // VideoProcessorBlt 的输出视图要求 RENDER_TARGET；渲染 / 编码器读取要求 SHADER_RESOURCE
+            BindFlags: (D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET).0 as u32,
             CPUAccessFlags: 0,
             MiscFlags: 0,
         };

@@ -82,13 +82,14 @@ pub fn enumerate_video_mfts(
         let Some(activate) = (unsafe { (*slot).clone() }) else {
             continue;
         };
-        out.push(read_activate_info(&activate));
+        out.push(activate_info(&activate));
     }
     unsafe { CoTaskMemFree(Some(act_ptr.cast())) };
     Ok(out)
 }
 
-fn read_activate_info(activate: &IMFActivate) -> MftInfo {
+/// 读取一个已枚举 MFT 的友好名称与硬件标记（编码器 / 解码器选型时打印候选列表）。
+pub fn activate_info(activate: &IMFActivate) -> MftInfo {
     let friendly_name = allocated_string(activate, &MFT_FRIENDLY_NAME_Attribute)
         .unwrap_or_else(|| "<未命名 MFT>".into());
     let hardware = allocated_string(activate, &MFT_ENUM_HARDWARE_URL_Attribute).is_some();

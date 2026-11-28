@@ -51,8 +51,10 @@ Texture2D texY  : register(t0);
 Texture2D texUV : register(t1);
 SamplerState samp : register(s0);
 float4 main(float2 uv : TEXCOORD0) : SV_Target {
-    float y  = texY.Sample(samp, uv).r;
-    float2 c = texUV.Sample(samp, uv).rg - 0.5;
+    // 码流约定：BT.709 有限范围（与 macOS 被控端的 420v、Windows 采集端的
+    // VideoProcessor 输出一致）。不展开 16-235 的话画面会发灰。
+    float y = (texY.Sample(samp, uv).r - 16.0 / 255.0) * (255.0 / 219.0);
+    float2 c = (texUV.Sample(samp, uv).rg - 0.5) * (255.0 / 224.0);
     float3 rgb;
     rgb.r = y + 1.5748 * c.x;
     rgb.g = y - 0.1873 * c.x - 0.4681 * c.y;
@@ -66,7 +68,8 @@ pub struct RendererWin {
     swapchain: IDXGISwapChain1,
     device: ID3D11Device,
     context: ID3D11DeviceContext,
-    rtv: ID3D11RenderTargetView,
+    /// 后台缓冲的渲染目标视图；`resize` 期间（ResizeBuffers 前后）短暂为 `None`。
+    rtv: Option<ID3D11RenderTargetView>,
     vs: ID3D11VertexShader,
     ps: ID3D11PixelShader,
     sampler: ID3D11SamplerState,
@@ -100,7 +103,7 @@ impl RendererWin {
         };
 
         let swap_size = swapchain_size_of(&swapchain);
-        let rtv = create_backbuffer_rtv(&device, &swapchain)?;
+        let rtv = Some(create_backbuffer_rtv(&device, &swapchain)?);
         let vs = compile_vs(&device)?;
         let ps = compile_ps(&device, PS_NV12_SRC)?;
         let sampler = create_sampler(&device)?;
@@ -355,21 +358,30 @@ impl Renderer for RendererWin {
                 frame.texture
             )));
         };
-        // 所有权接收：解码器移交的 1 次 COM 引用，呈现后释放。
-        let texture: ID3D11Texture2D =
-            unsafe { std::mem::transmute::<*mut core::ffi::c_void, ID3D11Texture2D>(raw) };
+        // 只借用、不接管引用计数：纹理由解码器的纹理环持有。之前这里把指针 transmute 成
+        // COM 对象再 Drop，等于每帧多 Release 一次，解码器的纹理被提前销毁。
+        let texture = unsafe { ID3D11Texture2D::from_raw_borrowed(&raw) }
+            .ok_or_else(|| Error::InvalidFrame("解码帧纹理指针为空".into()))?;
+        let Some(rtv) = self.rtv.as_ref() else {
+            return Err(Error::InvalidFrame(
+                "渲染目标未就绪（交换链正在调整尺寸）".into(),
+            ));
+        };
 
         let mut desc = D3D11_TEXTURE2D_DESC::default();
         unsafe { texture.GetDesc(&mut desc) };
         self.video_size = (desc.Width, desc.Height);
 
-        let srvs = Self::nv12_srvs(&self.device, &texture).map_err(mfw)?;
+        let srvs = Self::nv12_srvs(&self.device, texture).map_err(|err| {
+            eprintln!("[render] 创建 NV12 着色器视图失败：{err}");
+            mfw(err)
+        })?;
         let viewport = self.viewport();
         unsafe {
             self.context
-                .OMSetRenderTargets(Some(&[Some(self.rtv.clone())]), None);
+                .OMSetRenderTargets(Some(&[Some(rtv.clone())]), None);
             self.context
-                .ClearRenderTargetView(&self.rtv, &[0.0f32, 0.0, 0.0, 1.0]);
+                .ClearRenderTargetView(rtv, &[0.0f32, 0.0, 0.0, 1.0]);
             self.context.RSSetViewports(Some(&[viewport]));
             self.context
                 .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
@@ -387,10 +399,10 @@ impl Renderer for RendererWin {
                 .Present(interval, windows::Win32::Graphics::Dxgi::DXGI_PRESENT(0))
         };
         drop(srvs);
-        drop(texture);
         if present_result.is_err() {
-            self.rtv = create_backbuffer_rtv(&self.device, &self.swapchain)?;
+            self.rtv = Some(create_backbuffer_rtv(&self.device, &self.swapchain)?);
             let hr_err = windows::core::Error::from_hresult(present_result);
+            eprintln!("[render] Present 失败：{hr_err}");
             return Err(Error::InvalidFrame(format!("Present 失败：{hr_err}")));
         }
         Ok(Timestamp(rc_win32core::host_time_us() as u32))
@@ -400,14 +412,10 @@ impl Renderer for RendererWin {
         if size.0 == 0 || size.1 == 0 {
             return Err(Error::InvalidConfig("resize 尺寸非法".into()));
         }
-        // 先释放 RTV 引用（ResizeBuffers 要求所有绑定为空）
-        // 先释放 RTV 引用（ResizeBuffers 要求所有绑定为空）
-        let empty_rtv: Option<ID3D11RenderTargetView> = None;
-        self.rtv = unsafe {
-            core::mem::transmute::<Option<ID3D11RenderTargetView>, ID3D11RenderTargetView>(
-                empty_rtv,
-            )
-        };
+        // ResizeBuffers 要求后台缓冲的所有引用都释放，包括上下文上的绑定
+        unsafe { self.context.OMSetRenderTargets(None, None) };
+        self.rtv = None;
+        self.swap_size = size;
         unsafe {
             self.swapchain.ResizeBuffers(
                 0,
@@ -418,8 +426,7 @@ impl Renderer for RendererWin {
             )
         }
         .map_err(mfw)?;
-        self.swap_size = size;
-        self.rtv = create_backbuffer_rtv(&self.device, &self.swapchain)?;
+        self.rtv = Some(create_backbuffer_rtv(&self.device, &self.swapchain)?);
         Ok(())
     }
 
@@ -451,10 +458,14 @@ pub struct D3d11Renderer {
 }
 
 impl D3d11Renderer {
-    /// 创建渲染器。
-    pub fn new(_cfg: D3d11RendererConfig) -> Result<Self> {
+    /// 创建渲染器（自建离屏 composition 交换链；用于没有预分配表面的会话，例如无界面诊断）。
+    ///
+    /// 以前这里传的是空指针 `Some(0)`，渲染器必然报「交换链指针无效」，于是凡是没带表面的
+    /// 会话都降级成假的解码 / 呈现栈。
+    pub fn new(cfg: D3d11RendererConfig) -> Result<Self> {
+        let _ = cfg;
         Ok(Self {
-            inner: RendererWin::new(Some(0))?,
+            inner: RendererWin::new(None)?,
         })
     }
 

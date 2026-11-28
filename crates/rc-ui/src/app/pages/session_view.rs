@@ -5,6 +5,7 @@ use windows::core::Result;
 
 use std::{sync::Arc, thread};
 
+use rc_client_core::platform::PreallocatedRenderSurface;
 use rc_client_core::session_bridge::SessionHandle;
 use rc_input::InputEvent;
 use windows::core::Interface;
@@ -172,6 +173,17 @@ impl App {
         Ok(())
     }
 
+    /// 会话窗口画面面板的交换链（预分配渲染表面）。
+    fn session_surface(&self) -> Result<PreallocatedRenderSurface> {
+        let panel: SwapChainPanel = self.find("SessionPanel")?;
+        crate::media::graphics::session_render_surface(&panel).map_err(|err| {
+            windows::core::Error::new(
+                windows::core::HRESULT(0x8000_4005u32 as i32), // E_FAIL
+                format!("会话画面表面：{err}").into(),
+            )
+        })
+    }
+
     /// Esc 退出全屏（在注入远端之前本地消费）。
     fn exit_fullscreen_if_active(&mut self) -> bool {
         if !self.fullscreen {
@@ -226,10 +238,14 @@ impl App {
             .find(|d| d.device_id == code)
             .map(|d| self.device_name_of(d))
             .unwrap_or_else(|| code.to_string());
+        // M3.6：会话 UI 迁入独立窗口；主窗口留在当前页。
+        // 先把会话窗口建出来，再改它里面的元素（顺序反了查找会落空）。
+        self.ensure_session_window(&name)?;
         self.set_session_overlay("正在连接…", true);
         let _ = self.set_visible("SessionReconnect", false);
-        // M3.6：会话 UI 迁入独立窗口；主窗口留在当前页
-        self.ensure_session_window(&name)?;
+        // 画面面板的交换链必须在界面线程创建，再随会话交给渲染器。不交的话，解码出来的
+        // 画面只会画在一个看不见的离屏表面上，会话窗口一直是黑的。
+        let surface = self.session_surface()?;
         let manager = self.auth.manager();
         let runtime = Arc::clone(&self.runtime);
         let events = self.sender();
@@ -239,7 +255,7 @@ impl App {
                 .request_connect(&code, sess::CONNECT_TIMEOUT)
                 .and_then(|grant| sess::build_session_config(&manager, grant, &params));
             let outcome = match result {
-                Ok(cfg) => Ok(SessionHandle::spawn(cfg)),
+                Ok(cfg) => Ok(SessionHandle::spawn_with_surface(cfg, Some(surface))),
                 Err(err) => Err(err),
             };
             events.send(Event::SessionLaunched(

@@ -8,7 +8,8 @@
 //! - [`host`]：被控服务（[`rc_client_core::host_bridge::HostHandle`]）编排；
 //! - [`agent_state`]：后台被控进程的持久化开关；
 //! - [`agent_ipc`]：主界面 ↔ 后台被控进程的命名管道协议；
-//! - [`named_pipe`]：命名管道服务端的通用骨架（守护服务与后台进程共用）。
+//! - [`named_pipe`]：命名管道服务端的通用骨架（守护服务与后台进程共用）；
+//! - [`trace_log`]：内部事件日志开关（环境变量 `RC_TRACE`，诊断用）。
 //!
 //! 本 crate 不引用任何 UI 框架；可单测。
 
@@ -22,3 +23,4 @@ pub mod daemon_ipc;
 pub mod host;
 pub mod named_pipe;
 pub mod signal_runtime;
+pub mod trace_log;

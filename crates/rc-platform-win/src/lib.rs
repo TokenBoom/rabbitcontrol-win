@@ -13,7 +13,7 @@
 
 use std::any::Any;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rc_capture::CaptureBackend;
 use rc_client_core::platform::{
@@ -152,6 +152,25 @@ impl ClientPlatformHooks for WinClientPlatformHooks {
 
     fn lock_screen_now(&self) -> bool {
         rc_capture_win::lock_screen_now()
+    }
+
+    // 被控端「熄屏 / 锁屏就不出帧」的三个钩子（DXGI 桌面复制的出帧前提，见
+    // `rc_capture_win::dxgi` 模块文档）：core 在建会话管线前唤醒显示器、
+    // 会话中每 250ms 巡检锁屏并告知控制端、熄屏且未锁屏时自动唤醒。
+    fn wake_display_if_asleep(&self) -> std::result::Result<Option<Box<dyn Any + Send>>, String> {
+        rc_win32core::wake_display_if_asleep(
+            "RabbitControl 被控会话唤醒显示器",
+            Duration::from_millis(2500),
+        )
+        .map(|guard| guard.map(|guard| Box::new(guard) as Box<dyn Any + Send>))
+    }
+
+    fn is_display_asleep(&self) -> bool {
+        rc_win32core::display_is_asleep()
+    }
+
+    fn is_screen_locked(&self) -> bool {
+        rc_win32core::screen_is_locked()
     }
 
     fn create_main_display_injector(&self) -> Option<Box<dyn InputInjector>> {

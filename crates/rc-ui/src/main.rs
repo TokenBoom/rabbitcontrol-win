@@ -2,6 +2,7 @@
 
 mod app;
 mod biz;
+mod connect_probe;
 #[allow(dead_code)] // M5a 接线后移除
 mod media;
 mod ui;
@@ -80,8 +81,14 @@ fn run() -> Result<(), Box<dyn Error>> {
     if !acquire_single_instance() {
         return Ok(());
     }
-    // 必须先于登录恢复与信令连接：否则主界面会与后台进程互踢信令
-    handshake_with_agent();
+    // 必须先于登录恢复与信令连接：否则主界面会与后台进程互踢信令。
+    // 诊断时可以跳过（本进程用 RC_CONFIG_DIR 扮演第二台设备，不该让本机后台进程让位）。
+    let no_handshake = std::env::args()
+        .skip(1)
+        .any(|arg| arg == "--no-agent-handshake");
+    if !no_handshake {
+        handshake_with_agent();
+    }
     rc_platform_win::register_all();
     let shell = ui::shell::Shell::new()?;
     let mut app = app::App::new(&shell)?;
@@ -90,6 +97,13 @@ fn run() -> Result<(), Box<dyn Error>> {
 }
 
 fn main() {
+    // 内部事件日志：设了环境变量 RC_TRACE 才生效（诊断用）
+    rc_appcore::trace_log::init_to_stderr("RC_TRACE");
+    // 无界面连接诊断：在初始化 XAML 之前处理（它不创建窗口）。
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|arg| arg == "--connect-probe") {
+        std::process::exit(connect_probe::run(&args));
+    }
     // M6：--version 供打包脚本读取版本（XAML 初始化前退出）
     if std::env::args()
         .skip(1)

@@ -15,25 +15,28 @@
 //! - **线程 QoS** [`promote_current_thread_qos`]：采集/编码/渲染线程经
 //!   MMCSS（`AvSetMmThreadCharacteristics`，"Pro Audio"/"Playback" 类别）
 //!   注册，获得比普通优先级更稳定的调度延迟。
-//! - **电源请求** [`PowerRequest`]：被控会话期间用 `PowerSetRequest`
-//!   阻止系统休眠/关屏导致采集中断。
+//! - **电源与桌面状态** [`power`]：[`PowerRequest`]（被控会话期间用
+//!   `PowerSetRequest` 阻止系统休眠/关屏导致采集中断）、显示器熄屏状态与
+//!   唤醒、锁屏查询。**已实现**。
 //! - **主机时钟** [`host_time_us`]：基于 `QueryPerformanceCounter` 的
 //!   单调微秒时钟，采集帧时间戳与管线时钟的统一基准。
 //!
 //! # 当前状态
 //!
-//! `ComApartment` 与 [`mf`] 已实现；消息窗口/MMCSS/电源请求/QPC 时钟
+//! `ComApartment`、[`mf`] 与 [`power`] 已实现；消息窗口/MMCSS/QPC 时钟
 //! 仍为骨架占位。unsafe 策略：crate 级 `deny(unsafe_code)`，FFI 边界
-//! 模块（`com`/`mf`）定点 `allow` 并在模块头注明安全不变量。
+//! 模块（`com`/`mf`/`power`）定点 `allow` 并在模块头注明安全不变量。
 
 #![deny(missing_docs)]
 #![deny(unsafe_code)]
 
 mod com;
 pub mod mf;
+pub mod power;
 
 pub use com::ApartmentModel;
 pub use com::ComApartment;
+pub use power::{display_is_asleep, screen_is_locked, wake_display_if_asleep, PowerRequest};
 
 /// 宽字符（UTF-16）缓冲转 Rust 字符串，按首个 NUL 截断。
 ///
@@ -78,27 +81,6 @@ impl MessageWindow {
 /// TODO: `AvSetMmThreadCharacteristicsW("Pro Audio")`，句柄线程退出前
 /// `AvRevertMmThreadCharacteristics`。
 pub fn promote_current_thread_qos() {}
-
-/// 电源可用性请求守卫：阻止会话期间系统休眠或显示器关闭。
-///
-/// TODO: `PowerCreateRequest` + `PowerSetRequest`（`PowerRequestSystemRequired`；
-/// 交互会话追加 `PowerRequestDisplayRequired`），Drop 时 `PowerClearRequest`。
-pub struct PowerRequest {
-    interactive: bool,
-}
-
-impl PowerRequest {
-    /// 开始一个电源请求。`reason` 出现在 `powercfg /requests` 输出中。
-    pub fn begin(_reason: &str, interactive: bool) -> std::result::Result<Self, String> {
-        // TODO: PowerCreateRequest/PowerSetRequest 实现。
-        Ok(Self { interactive })
-    }
-
-    /// 是否包含显示器保持唤醒。
-    pub fn keeps_display_on(&self) -> bool {
-        self.interactive
-    }
-}
 
 /// 主机单调时钟（微秒），采集帧时间戳与管线时钟的统一基准。
 ///

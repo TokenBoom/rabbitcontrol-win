@@ -4,9 +4,16 @@
 //!
 //! 硬件编码 MFT 全部是异步 MFT：需要先 `MF_TRANSFORM_ASYNC_UNLOCK`，
 //! 然后按事件序驱动——`METransformNeedInput` → `ProcessInput` →
-//! `METransformHaveOutput` → `ProcessOutput`。事件队列以
-//! `GetEvent(NO_WAIT)` + 1ms 轮询消费，截止时间（E5）由调用方时间戳
-//! 换算为轮询上限。
+//! `METransformHaveOutput` → `ProcessOutput`。事件队列以 `GetEvent(NO_WAIT)` + 1ms
+//! 轮询消费；等待某类事件时顺手取到的其它事件入队留存（提前到达的下一个 NeedInput
+//! 丢了的话，下一帧就再也等不到输入机会）。
+//!
+//! # 截止时间（E5，契约模型）
+//!
+//! `deadline_ts` 与帧时间戳同属注入的会话时间域：预算 = `deadline_ts − 帧时间戳`，
+//! 从进入 [`Encoder::encode`] 起算。等到输出之前超时，输入已被 MFT 吃掉但输出被弃，
+//! 解码端的参考链断了，所以请求下一帧强制 IDR，并在下一帧之前先把那份迟到的输出
+//! 取走丢弃（不取走 MFT 不再要输入）。
 //!
 //! # 零拷贝输入
 //!
@@ -16,12 +23,16 @@
 //!
 //! # 输出
 //!
-//! 硬件 H.264 编码器输出 Annex-B 起始码流（`MF_MT_MPEG2`? 不——由
-//! 编码器字节流自带 00 00 00 01 起始码，capabilities 声明 AnnexB）。
+//! 硬件 H.264 编码器输出 Annex-B 码流（自带 `00 00 00 01` 起始码）；是否关键帧
+//! 按码流里的 NAL 类型判定，不依赖「本帧请求过 IDR」。
+//!
+//! COM：Media Foundation 要求调用线程初始化过 COM 套间。编码器可能被移交给别的线程
+//! 使用，所以按线程各做一次配对的套间初始化（线程退出时释放）。
 
 #![allow(unsafe_code)] // MF / D3D11 FFI 边界
 
-use std::time::Duration;
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 use rc_capture::CapturedFrame;
 use rc_encode::{BitstreamFormat, Codec, EncodedFrame, Encoder, EncoderCaps, EncoderConfig};
@@ -36,15 +47,30 @@ use windows::Win32::Media::MediaFoundation::{
     MFVideoFormat_H264, MFVideoFormat_NV12, MFVideoInterlace_Progressive,
     MFT_MESSAGE_COMMAND_FLUSH, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
     MFT_MESSAGE_NOTIFY_END_OF_STREAM, MFT_MESSAGE_NOTIFY_START_OF_STREAM,
-    MFT_MESSAGE_SET_D3D_MANAGER, MFT_OUTPUT_DATA_BUFFER, MF_EVENT_FLAG_NO_WAIT,
+    MFT_MESSAGE_SET_D3D_MANAGER, MFT_OUTPUT_DATA_BUFFER, MF_EVENT_FLAG_NO_WAIT, MF_EVENT_TYPE,
     MF_E_NO_EVENTS_AVAILABLE, MF_MT_AVG_BITRATE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
     MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE, MF_TRANSFORM_ASYNC_UNLOCK,
 };
 
 use rc_win32core::mf::MfGuard;
 
-/// 事件轮询间隔（毫秒）。
-const EVENT_POLL_MS: u32 = 1;
+/// 事件轮询间隔。
+const EVENT_POLL: Duration = Duration::from_millis(1);
+/// 取走迟到输出的等待上限（它本来就已经产生了）。
+const LATE_OUTPUT_WAIT: Duration = Duration::from_millis(200);
+
+thread_local! {
+    /// 本线程的 COM 套间：首次使用时初始化，线程退出时配对释放。
+    static THREAD_COM: rc_win32core::ComApartment = rc_win32core::ComApartment::init(
+        rc_win32core::ApartmentModel::MultiThreaded,
+    )
+    .expect("编码线程初始化 COM 套间失败");
+}
+
+/// 保证当前线程已初始化 COM 套间。
+fn ensure_com() {
+    THREAD_COM.with(|_| ());
+}
 
 /// Media Foundation 硬件编码器。
 pub struct MfEncoder {
@@ -53,11 +79,14 @@ pub struct MfEncoder {
     transform: IMFTransform,
     event_gen: IMFMediaEventGenerator,
     codec: ICodecAPI,
+    /// 等待某类事件时顺手取到的其它事件，按原顺序留待后续使用。
+    queued_events: VecDeque<MF_EVENT_TYPE>,
+    /// 上一次等输出超时：那份迟到的输出还没取走，下一帧编码前先丢弃。
+    late_output_pending: bool,
     _mf_guard: MfGuard,
-    _coinit: rc_win32core::ComApartment,
     /// 输入样本时间基（100ns 单位递增，保证单调）。
     sample_time_100ns: i64,
-    /// 上一帧时长（100ns），按 fps 推导。
+    /// 帧时长（100ns），按 fps 推导。
     frame_duration_100ns: i64,
 }
 
@@ -65,8 +94,7 @@ impl MfEncoder {
     /// 构造编码器。违反延迟红线（E1/E2）的配置在构造期被拒绝。
     pub fn new(cfg: EncoderConfig) -> Result<Self> {
         cfg.validate()?;
-        let coinit = rc_win32core::ComApartment::init(rc_win32core::ApartmentModel::MultiThreaded)
-            .map_err(Error::InvalidConfig)?;
+        ensure_com();
         let mf_guard = MfGuard::startup().map_err(Error::InvalidConfig)?;
 
         let transform = activate_encoder(&cfg)?;
@@ -200,52 +228,105 @@ impl MfEncoder {
             transform.cast().map_err(mf_err("获取事件生成器失败"))?;
 
         let frame_duration_100ns = 10_000_000i64 / cfg.fps.max(1) as i64;
-        Ok(Self {
+        let encoder = Self {
             cfg,
             idr_pending: false,
             transform,
             event_gen,
             codec,
+            queued_events: VecDeque::new(),
+            late_output_pending: false,
             _mf_guard: mf_guard,
-            _coinit: coinit,
             sample_time_100ns: 0,
             frame_duration_100ns,
-        })
+        };
+        eprintln!(
+            "[encoder] 已创建：{:?} @ {} fps · {} bps",
+            encoder.cfg.resolution, encoder.cfg.fps, encoder.cfg.bitrate_bps
+        );
+        Ok(encoder)
     }
 
-    /// 等待指定事件到达（1ms 轮询；超过截止时间返回 Timeout）。
-    fn wait_event(
-        &mut self,
-        want: windows::Win32::Media::MediaFoundation::MF_EVENT_TYPE,
-        deadline_ts: Timestamp,
-    ) -> Result<()> {
+    /// 等到指定事件（1ms 轮询）；超过截止时间返回 `Error::Timeout`。
+    fn wait_event(&mut self, want: MF_EVENT_TYPE, deadline: Instant) -> Result<()> {
         loop {
+            if let Some(position) = self.queued_events.iter().position(|kind| *kind == want) {
+                self.queued_events.remove(position);
+                return Ok(());
+            }
             match unsafe { self.event_gen.GetEvent(MF_EVENT_FLAG_NO_WAIT) } {
                 Ok(event) => {
-                    let kind = unsafe { event.GetType() }
-                        .map_err(|e| Error::InvalidConfig(format!("取事件类型失败：{e}")))?;
-                    if kind == want.0 as u32 {
+                    let kind = unsafe { event.GetType() }.map_err(mf_err("取事件类型失败"))?;
+                    let kind = MF_EVENT_TYPE(kind as i32);
+                    if kind == want {
                         return Ok(());
                     }
-                    // 其它事件（DrainComplete 等）忽略继续等
+                    // 其它事件（提前到达的 NeedInput、DrainComplete 等）留待后续
+                    self.queued_events.push_back(kind);
                 }
                 Err(err) if err.code() == MF_E_NO_EVENTS_AVAILABLE => {
-                    if rc_win32core::host_time_us() >= deadline_ts.0 as u64 {
-                        return Err(Error::Timeout(Duration::from_millis(5)));
+                    if Instant::now() >= deadline {
+                        return Err(Error::Timeout(EVENT_POLL));
                     }
-                    std::thread::sleep(Duration::from_millis(EVENT_POLL_MS as u64));
+                    std::thread::sleep(EVENT_POLL);
                 }
                 Err(err) => {
-                    return Err(Error::InvalidConfig(format!("事件等待失败：{err}")));
+                    return Err(mf_err("事件等待失败")(err));
                 }
             }
         }
+    }
+
+    /// 向 MFT 要一帧输出，取出码流字节。
+    fn take_output(&mut self) -> Result<Vec<u8>> {
+        let mut output = MFT_OUTPUT_DATA_BUFFER {
+            dwStreamID: 0,
+            pSample: std::mem::ManuallyDrop::new(None),
+            dwStatus: 0,
+            pEvents: std::mem::ManuallyDrop::new(None),
+        };
+        let mut status = 0u32;
+        unsafe {
+            self.transform
+                .ProcessOutput(0, std::slice::from_mut(&mut output), &mut status)
+        }
+        .map_err(|e| Error::Capture {
+            recoverable: true,
+            msg: format!("ProcessOutput 失败：{e}"),
+        })?;
+        // pSample 是 ManuallyDrop：取出后由 out_sample 独占，避免双重释放
+        let out_sample: Option<windows::Win32::Media::MediaFoundation::IMFSample> =
+            unsafe { std::mem::ManuallyDrop::take(&mut output.pSample) };
+        let out_sample = out_sample.ok_or_else(|| Error::Capture {
+            recoverable: true,
+            msg: "编码器未返回样本".into(),
+        })?;
+        let buffer =
+            unsafe { out_sample.ConvertToContiguousBuffer() }.map_err(mf_err("样本拼接失败"))?;
+        let mut data_ptr = std::ptr::null_mut::<u8>();
+        // `pcbCurrentLength` 是已填充长度（编码器写好的字节数）
+        let mut data_len = 0u32;
+        unsafe {
+            buffer
+                .Lock(&mut data_ptr, None, Some(&mut data_len))
+                .map_err(mf_err("样本锁定失败"))?;
+        }
+        let data = if data_ptr.is_null() || data_len == 0 {
+            Vec::new()
+        } else {
+            unsafe { std::slice::from_raw_parts(data_ptr, data_len as usize) }.to_vec()
+        };
+        unsafe { buffer.Unlock() }.map_err(mf_err("样本解锁失败"))?;
+        Ok(data)
     }
 }
 
 /// 类型化错误辅助。
 fn mf_err(context: &'static str) -> impl Fn(windows::core::Error) -> Error {
-    move |e| Error::InvalidConfig(format!("{context}：{e}"))
+    move |e| {
+        eprintln!("[encoder] {context}：{e}");
+        Error::InvalidConfig(format!("{context}：{e}"))
+    }
 }
 
 /// ICodecAPI 设 U32 值。
@@ -268,16 +349,44 @@ fn set_codec_bool(codec: &ICodecAPI, key: &windows::core::GUID) -> Result<()> {
     }
 }
 
+/// 按 NAL 单元类型判断 Annex-B 码流的首个片是不是 IDR（类型 5）。
+///
+/// 返回 `None` 表示没找到片（只有 SPS/PPS/SEI 等），由调用方回退到「是否请求过 IDR」。
+fn first_slice_is_idr(data: &[u8]) -> Option<bool> {
+    let mut index = 0;
+    while index + 3 < data.len() {
+        if data[index] == 0 && data[index + 1] == 0 && data[index + 2] == 1 {
+            match data[index + 3] & 0x1F {
+                5 => return Some(true),
+                1 => return Some(false),
+                _ => index += 3,
+            }
+        } else {
+            index += 1;
+        }
+    }
+    None
+}
+
 /// 激活硬件（优先）H.264 编码 MFT。
 fn activate_encoder(cfg: &EncoderConfig) -> Result<IMFTransform> {
     use windows::Win32::Media::MediaFoundation::{
-        IMFActivate, MFVideoFormat_NV12, MFT_CATEGORY_VIDEO_ENCODER,
+        IMFActivate, MFTEnumEx, MFVideoFormat_NV12, MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG,
+        MFT_REGISTER_TYPE_INFO,
     };
     let infos = rc_win32core::mf::enumerate_video_mfts(
         MFT_CATEGORY_VIDEO_ENCODER,
         rc_win32core::mf::enum_all_sorted(),
     )
     .map_err(Error::InvalidConfig)?;
+    eprintln!(
+        "[encoder] 候选编码 MFT：{}",
+        infos
+            .iter()
+            .map(|info| info.friendly_name.as_str())
+            .collect::<Vec<_>>()
+            .join(" / ")
+    );
     if infos.is_empty() {
         return Err(Error::InvalidConfig(
             "未找到可用的 H.264 编码 MFT（无硬编且缺软件编码器）".into(),
@@ -286,9 +395,6 @@ fn activate_encoder(cfg: &EncoderConfig) -> Result<IMFTransform> {
     let _ = cfg;
     // enumerate 只回名称/硬件标记；重新枚举激活首个可用
     unsafe {
-        use windows::Win32::Media::MediaFoundation::{
-            MFTEnumEx, MFT_ENUM_FLAG, MFT_REGISTER_TYPE_INFO,
-        };
         let in_type = MFT_REGISTER_TYPE_INFO {
             guidMajorType: MFMediaType_Video,
             guidSubtype: MFVideoFormat_NV12,
@@ -313,6 +419,7 @@ fn activate_encoder(cfg: &EncoderConfig) -> Result<IMFTransform> {
         )
         .map_err(|e| Error::InvalidConfig(format!("编码 MFT 枚举失败：{e}")))?;
         if act_ptr.is_null() || count == 0 {
+            eprintln!("[encoder] MFTEnumEx 没有找到异步硬件 H.264 编码 MFT");
             return Err(Error::InvalidConfig("无可用编码 MFT".into()));
         }
         for index in 0..count as usize {
@@ -320,9 +427,14 @@ fn activate_encoder(cfg: &EncoderConfig) -> Result<IMFTransform> {
             let Some(activate) = (*slot).clone() else {
                 continue;
             };
-            if let Ok(t) = activate.ActivateObject::<IMFTransform>() {
-                windows::Win32::System::Com::CoTaskMemFree(Some(act_ptr.cast()));
-                return Ok(t);
+            let name = rc_win32core::mf::activate_info(&activate).friendly_name;
+            match activate.ActivateObject::<IMFTransform>() {
+                Ok(transform) => {
+                    eprintln!("[encoder] 选用编码 MFT：{name}");
+                    windows::Win32::System::Com::CoTaskMemFree(Some(act_ptr.cast()));
+                    return Ok(transform);
+                }
+                Err(err) => eprintln!("[encoder] {name} 激活失败，尝试下一个：{err}"),
             }
         }
         windows::Win32::System::Com::CoTaskMemFree(Some(act_ptr.cast()));
@@ -330,7 +442,7 @@ fn activate_encoder(cfg: &EncoderConfig) -> Result<IMFTransform> {
     Err(Error::InvalidConfig("编码 MFT 激活失败".into()))
 }
 
-// COM 指针仅在创建线程（会话线程）使用；Send 为满足 Encoder 契约的一次性移交
+// COM 指针只在一次调用的线程上使用；Send 为满足 Encoder 契约的一次性移交
 unsafe impl Send for MfEncoder {}
 
 impl Encoder for MfEncoder {
@@ -340,17 +452,38 @@ impl Encoder for MfEncoder {
         force_idr: bool,
         deadline_ts: Timestamp,
     ) -> Result<EncodedFrame> {
+        // E5：预算 = deadline_ts - 帧时间戳（同一注入时间域），从进入本函数起算
+        let budget_us = deadline_ts.0.saturating_sub(frame.timestamp.0);
+        if budget_us == 0 {
+            return Err(Error::Timeout(Duration::ZERO));
+        }
+        let started = Instant::now();
+        let deadline = started + Duration::from_micros(u64::from(budget_us));
+        ensure_com();
         let force_idr = force_idr || std::mem::take(&mut self.idr_pending);
+
+        // 上一次迟到的输出先取走丢弃：不取走，MFT 不会再要输入
+        if std::mem::take(&mut self.late_output_pending) {
+            self.wait_event(METransformHaveOutput, Instant::now() + LATE_OUTPUT_WAIT)?;
+            self.take_output()?;
+        }
+
         if force_idr {
             set_codec_bool(&self.codec, &CODECAPI_AVEncVideoForceKeyFrame)?;
         }
-        // NeedInput → ProcessInput
-        self.wait_event(METransformNeedInput, deadline_ts)?;
+        // NeedInput → ProcessInput。等不到输入机会说明 MFT 还没消化完：这帧没被吃掉，
+        // 参考链无损，直接超时返回即可。
+        self.wait_event(METransformNeedInput, deadline)
+            .map_err(|_| Error::Timeout(started.elapsed()))?;
 
-        let texture: ID3D11Texture2D = match &frame.texture {
-            rc_capture::FrameTexture::D3D11(ptr) => unsafe {
-                std::mem::transmute::<*mut core::ffi::c_void, ID3D11Texture2D>(*ptr)
-            },
+        // 只借用、不接管引用计数：纹理归采集端（`resource_guard`）持有。之前这里把指针
+        // transmute 成 COM 对象再随作用域 Drop，等于每帧多 Release 一次，采集端的纹理
+        // 被提前销毁，第二帧起就是释放后使用。
+        let texture: &ID3D11Texture2D = match &frame.texture {
+            rc_capture::FrameTexture::D3D11(ptr) => {
+                unsafe { ID3D11Texture2D::from_raw_borrowed(ptr) }
+                    .ok_or_else(|| Error::InvalidConfig("采集帧纹理指针为空".into()))?
+            }
             _ => {
                 return Err(Error::InvalidConfig(
                     "编码器仅接受 D3D11 NV12 纹理输入".into(),
@@ -360,7 +493,7 @@ impl Encoder for MfEncoder {
         let buffer = unsafe {
             MFCreateDXGISurfaceBuffer(
                 &ID3D11Texture2D::IID,
-                &texture,
+                texture,
                 0,
                 windows::Win32::Foundation::FALSE,
             )
@@ -383,47 +516,17 @@ impl Encoder for MfEncoder {
                 .map_err(mf_err("ProcessInput 失败"))?;
         }
 
-        // HaveOutput → ProcessOutput
-        self.wait_event(METransformHaveOutput, deadline_ts)?;
-        let mut output = MFT_OUTPUT_DATA_BUFFER {
-            dwStreamID: 0,
-            pSample: std::mem::ManuallyDrop::new(None),
-            dwStatus: 0,
-            pEvents: std::mem::ManuallyDrop::new(None),
-        };
-        let mut status = 0u32;
-        unsafe {
-            self.transform
-                .ProcessOutput(0, std::slice::from_mut(&mut output), &mut status)
-                .map_err(|e| Error::Capture {
-                    recoverable: true,
-                    msg: format!("ProcessOutput 失败：{e}"),
-                })?;
+        // HaveOutput → ProcessOutput。输入已经被吃掉：等不到输出就超时返回，那份迟到
+        // 的输出下一帧丢弃，并请求 IDR 重建参考链。
+        if self.wait_event(METransformHaveOutput, deadline).is_err() {
+            self.late_output_pending = true;
+            self.idr_pending = true;
+            return Err(Error::Timeout(started.elapsed()));
         }
-        let out_sample = (*output.pSample).clone().ok_or_else(|| Error::Capture {
-            recoverable: true,
-            msg: "编码器未返回样本".into(),
-        })?;
-        let buffer =
-            unsafe { out_sample.ConvertToContiguousBuffer() }.map_err(mf_err("样本拼接失败"))?;
-        let mut data_ptr = std::ptr::null_mut::<u8>();
-        let mut data_len = 0u32;
-        unsafe {
-            buffer
-                .Lock(&mut data_ptr, None, Some(&mut data_len))
-                .map_err(mf_err("样本锁定失败"))?;
-        }
-        let data = if data_ptr.is_null() || data_len == 0 {
-            Vec::new()
-        } else {
-            let slice = unsafe { std::slice::from_raw_parts(data_ptr, data_len as usize) };
-            slice.to_vec()
-        };
-        unsafe {
-            buffer.Unlock().map_err(mf_err("样本解锁失败"))?;
-        }
+        let data = self.take_output()?;
 
-        let is_keyframe = force_idr;
+        let elapsed_us = u32::try_from(started.elapsed().as_micros()).unwrap_or(u32::MAX);
+        let is_keyframe = first_slice_is_idr(&data).unwrap_or(force_idr);
         Ok(EncodedFrame {
             data,
             kind: if is_keyframe {
@@ -432,7 +535,8 @@ impl Encoder for MfEncoder {
                 FrameKind::P
             },
             is_keyframe,
-            encode_done_ts: Timestamp(rc_win32core::host_time_us() as u32),
+            // 完成时刻按注入时间域估算（契约允许的模型，见 rc-encode 文档）
+            encode_done_ts: Timestamp(frame.timestamp.0.saturating_add(elapsed_us)),
         })
     }
 
@@ -479,6 +583,29 @@ impl Encoder for MfEncoder {
                 .transform
                 .ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
         }
+        self.queued_events.clear();
+        self.late_output_pending = false;
+        self.idr_pending = true;
         Ok(Vec::new())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::first_slice_is_idr;
+
+    #[test]
+    fn idr_is_detected_from_the_first_slice_nal_type() {
+        // SPS(7) + PPS(8) + IDR 片(5)
+        let idr = [
+            0, 0, 0, 1, 0x67, 0x42, 0, 0, 0, 1, 0x68, 0, 0, 0, 1, 0x65, 0x88,
+        ];
+        // SPS + PPS + 非 IDR 片(1)
+        let p = [
+            0, 0, 0, 1, 0x67, 0x42, 0, 0, 0, 1, 0x68, 0, 0, 0, 1, 0x41, 0x9a,
+        ];
+        assert_eq!(first_slice_is_idr(&idr), Some(true));
+        assert_eq!(first_slice_is_idr(&p), Some(false));
+        assert_eq!(first_slice_is_idr(&[0, 0, 0, 1, 0x67, 0x42]), None);
     }
 }
