@@ -1,16 +1,19 @@
 # RabbitControl Windows（`TokenBoom/rabbitcontrol-win`）
 
-RabbitControl Windows 客户端与硬件适配仓库，基于 [`TokenBoom/rabbitcontrol-core`](https://github.com/TokenBoom/rabbitcontrol-core) v0.2.2 构建：原生低延迟硬件后端、XAML Islands 桌面应用、被控端服务与用户会话代理。
+RabbitControl Windows 客户端与硬件适配仓库，基于 [`TokenBoom/rabbitcontrol-core`](https://github.com/TokenBoom/rabbitcontrol-core) v0.2.7 构建：原生低延迟硬件后端、XAML Islands 桌面应用、被控端服务与用户会话代理。
 
 ## 功能概览
 
 ### 主控端（控制远端设备）
 
 - **登录**：服务器探测 + Root CA TOFU 校验 + 设备绑定 + mTLS 设备证书签发 + Token 自动轮换
-- **设备管理**：设备列表/在线状态、最近连接/收藏历史、9 位码连接、LAN 直连加速
+- **设备管理**：设备列表/在线状态、最近连接/收藏历史、9 位码连接、LAN 直连加速；信令重新连上、本机设备码变化、主窗口回到前台（30 秒内不重复）时自动静默刷新
 - **会话**：独立可缩放窗口（全屏/Esc 退出）、D3D11 硬件渲染 letterbox、性能 HUD（时长/传输/帧率/码率/RTT/丢包）、画质工具条（分辨率/帧率/码率/编解码/鼠标模式/多屏切换热切换）、仅观看模式
 - **输入**：XAML Island 指针/键盘捕获、Set-1 扫描码 + E0 前缀注入、虚拟屏多屏映射
-- **工具通道**：终端（文本视图）、文件传输（上传/下载/取消/进度）、端口映射（添加/暂停/启用/删除/吞吐统计）
+- **工具通道**：
+  - 终端：真终端（自研 VT100/xterm 屏幕模型）：16/256/真彩色、粗体/斜体/下划线/删除线/反显、全角字符按列对齐、备用屏幕（vim/less 这类全屏程序）、滚动历史（滚轮翻看、翻看时来了新输出有提示）、拖动 / 双击 / 三击选区与复制、括号粘贴、输入法直接可用、按键编码与 macOS 端的 xterm.js 一致；被控端锁屏时先验证系统密码（只校验，不解锁屏幕）；对方不允许用终端时给出说明
+  - 文件传输（上传/下载/取消/进度）、端口映射（添加/暂停/启用/删除/吞吐统计）
+  - 工具面板宽度可拖右侧分隔条调整
 - **剪贴板**：CF_UNICODETEXT 双向同步（有界重试、回环抑制）
 - **音频**：WASAPI 共享模式播放（AUTOCONVERTPCM 引擎转换）
 - **重连**：异常断开 3s×3 自动重连、SessionSwitching 快速接续
@@ -38,6 +41,7 @@ RabbitControl Windows 客户端与硬件适配仓库，基于 [`TokenBoom/rabbit
 - `rc-cli conv-bench`：BGRA→NV12 转换的 GPU 耗时
 - `rc-cli auth-probe`：登录联调回归
 - `rabbitcontrol-win --connect-probe <设备码>`：用另一套配置目录（`RC_CONFIG_DIR`）作「第二台设备」，无界面地把协商结果和画面统计打出来
+- `rabbitcontrol-win --demo-terminal`（仅调试构建，建议同时带 `--no-agent-handshake`）：不连远端，直接开会话窗口演示终端面板——按节奏放一段有代表性的远端输出（颜色 / 全角字符 / 全屏程序 / 滚动历史），键入由本地回显。Windows 被控端没有终端服务，终端面板的实机核对靠它
 - `scripts/e2e/`：UIA 联测自动化脚本
 
 ## 架构设计要点
