@@ -30,13 +30,19 @@ RabbitControl Windows 客户端与硬件适配仓库，基于 [`TokenBoom/rabbit
 ### 工具与诊断
 
 - `rc-cli probe`：硬件能力探测（D3D11/DXGI/MF/WASAPI）
-- `rc-cli loopback`：进程内采集→编码→解码→渲染端到端压测
+- `rc-cli loopback`：进程内全链路回环（采集→编码→打包→解包→解码→呈现，Windows 真实后端）；`--source dxgi` 采真实桌面、`--source synthetic` 用合成动画帧（锁屏 / 熄屏时也能跑）、默认 auto
+- `rc-cli hw-loop`：合成帧→编码→解码→读回校验，单独验证编解码链路
+- `rc-cli capture-probe`：DXGI 桌面复制能否出帧（不经过会话管线）
+- `rc-cli power-probe`：显示器熄屏通知、熄屏唤醒、锁屏查询
+- `rc-cli relay-check`：桌面采集的跨设备中转链路自检（不依赖桌面内容）
+- `rc-cli conv-bench`：BGRA→NV12 转换的 GPU 耗时
 - `rc-cli auth-probe`：登录联调回归
+- `rabbitcontrol-win --connect-probe <设备码>`：用另一套配置目录（`RC_CONFIG_DIR`）作「第二台设备」，无界面地把协商结果和画面统计打出来
 - `scripts/e2e/`：UIA 联测自动化脚本
 
 ## 架构设计要点
 
-1. **共享 D3D11 设备（`rc-d3d11`）**：DXGI 采集输出、MF 编码输入、MF 解码输出、渲染上屏在同一设备上零拷贝。全进程设备单例，后端间传递裸纹理指针。
+1. **共享 D3D11 设备（`rc-d3d11`）**：色彩转换输出、MF 编码输入、MF 解码输出、渲染上屏在同一设备上零拷贝。全进程设备单例，后端间传递裸纹理指针。**桌面复制是例外**：它放在独立的采集专用设备上，帧经共享纹理中转——阻塞的 `AcquireNextFrame` 若等在共享设备上，会把同设备上其它线程的 D3D11 调用一并卡住，硬件编码器只能按显示器垂直同步周期出帧。
 2. **统一 Win32 基础层（`rc-win32core`）**：COM 套间、隐藏消息窗口与消息泵、MMCSS 线程 QoS、电源请求、QPC 时钟集中管理。
 3. **被控端三进程（与 macOS 客户端同一模型）**：`rabbitcontrol-win.exe`（主界面，控制端）、`rc-host-agent.exe`（后台被控进程：托盘、审批小窗、信令与被控服务）、`rc-daemon.exe`（LocalSystem 服务：登录时把后台进程拉进用户会话，以及需要提权的操作）。同一设备同一时刻只能有一条信令连接（服务端会以新连接顶掉旧连接），所以主界面打开期间由主界面托管、后台进程让位，主界面退出后后台进程自动接管。三者的信令运行时与被控编排共用 `rc-appcore` 里的同一份实现。
 
@@ -61,7 +67,10 @@ cargo test --workspace -- --test-threads=1
 
 cargo run -p rc-ui          # 桌面端
 cargo run -p rc-cli -- probe
-cargo run -p rc-cli -- loopback --duration 10  # 端到端压测
+cargo run -p rc-cli -- loopback --duration 10                 # 全链路回环（桌面锁屏时自动改用合成帧）
+cargo run -p rc-cli -- loopback --source dxgi --strict        # 必须采真实桌面
+cargo run -p rc-cli -- hw-loop --width 1920 --height 1080     # 只验编解码
+cargo run -p rc-cli -- relay-check                            # 采集跨设备中转自检
 
 # 发布打包（产出 dist/*.zip）
 powershell -ExecutionPolicy Bypass -File scripts\package-win.ps1
