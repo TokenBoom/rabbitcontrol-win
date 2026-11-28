@@ -36,6 +36,50 @@ pub fn take_foreground_gained() -> bool {
     FOREGROUND_GAINED.swap(false, Ordering::SeqCst)
 }
 
+/// 客户端安全锁定期间，关窗被拦下：App 把它变成解锁弹窗，而不是退出。
+static CLOSE_GUARD: AtomicBool = AtomicBool::new(false);
+static CLOSE_BLOCKED: AtomicBool = AtomicBool::new(false);
+
+/// 开 / 关「关窗拦截」（客户端安全锁定用）。
+pub fn set_close_guard(on: bool) {
+    CLOSE_GUARD.store(on, Ordering::SeqCst);
+}
+
+/// 取出并清除「刚才有人想关窗但被拦下了」标记。
+pub fn take_close_blocked() -> bool {
+    CLOSE_BLOCKED.swap(false, Ordering::SeqCst)
+}
+
+/// 用系统默认程序打开一个链接：网页交给浏览器，安装包的下载地址也交给浏览器。
+pub fn open_url(url: &str) -> std::result::Result<(), String> {
+    use windows58::core::PCWSTR;
+    use windows58::Win32::UI::Shell::ShellExecuteW;
+    use windows58::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let operation: Vec<u16> = "open\0".encode_utf16().collect();
+    let target: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
+    // ShellExecuteW 的约定：返回值不超过 32 表示没打开成功
+    // SAFETY: 两个字符串都以 0 结尾，调用期间一直有效；不持有任何指针。
+    let handle = unsafe {
+        ShellExecuteW(
+            None,
+            PCWSTR(operation.as_ptr()),
+            PCWSTR(target.as_ptr()),
+            None,
+            None,
+            SW_SHOWNORMAL,
+        )
+    };
+    if handle.0 as isize <= 32 {
+        Err(format!(
+            "系统没有响应打开链接的请求（代码 {}）",
+            handle.0 as isize
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 /// 设计基准逻辑尺寸（含标题栏）。布局按此坐标书写；窗口物理尺寸 =
 /// 逻辑尺寸 × DPI × 小屏适配系数（由 App 在 DPI 变化时重设）。
 pub const DESIGN_WIDTH: f64 = 1000.0;
@@ -500,7 +544,15 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
             }
             PostMessageW(hwnd, UI_EVENT, None, None);
         }
-        WM_CLOSE => PostQuitMessage(0),
+        WM_CLOSE => {
+            if CLOSE_GUARD.load(Ordering::SeqCst) {
+                // 客户端安全锁定中：不退出，唤醒 App 去弹解锁框
+                CLOSE_BLOCKED.store(true, Ordering::SeqCst);
+                PostMessageW(hwnd, UI_EVENT, None, None);
+            } else {
+                PostQuitMessage(0);
+            }
+        }
         _ => return DefWindowProcW(hwnd, msg, w, l),
     }
     LRESULT(0)

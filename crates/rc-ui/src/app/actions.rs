@@ -90,6 +90,40 @@ pub(crate) enum Action {
     RenamePromptOk,
     RenamePromptCancel,
     AutoStartToggled(bool),
+    /// 标题栏「更多」菜单：安全锁定（没设密钥 = 去设置；设了 = 一键锁定；锁着 = 去解锁）。
+    OpenSecurityLock,
+    OpenFeedback,
+    OpenAbout,
+    /// 标题栏的账号按钮（账号 / 修改密码 / 退出登录）。
+    OpenAccount,
+    /// 标题栏的新版本提醒按钮：打开更新弹窗。
+    OpenUpdate,
+    ModalClose,
+    /// 更新弹窗里的「自动检查更新」开关。
+    UpdateAutoCheckToggled(bool),
+    UpdateDownload,
+    UpdateOpenPage,
+    UpdateRetry,
+    OpenChangePassword,
+    ChangePasswordSubmit,
+    ChangePasswordCancel,
+    /// 安全锁定弹窗：设置（或修改）密钥并锁定。
+    LockSetupSubmit,
+    LockSetupCancel,
+    LockUnlockSubmit,
+    /// 锁定弹窗里的找回路径：退出登录（重新登录后可以重新设置密钥）。
+    LockRecoverLogout,
+    /// 验证码旁边的眼睛：显示 / 打码。
+    ToggleHostCodeVisibility,
+    /// 验证方式旁边的齿轮：去设置页的安全 tab 改自定义密码。
+    OpenVerifySettings,
+    /// 设置页「客户端安全锁定」。
+    OpenLockSettings,
+    LockAutoAssistToggled(bool),
+    LockAutoStartToggled(bool),
+    /// 关于弹窗里的两个链接（开源仓库 / 问题反馈）。「问题反馈」与 [`Action::OpenFeedback`] 是同一件事。
+    OpenRepo,
+    OpenIssues,
 }
 
 pub(crate) enum Event {
@@ -108,9 +142,15 @@ pub(crate) enum Event {
     Terminal(TerminalEvent),
     HostStarted(std::result::Result<rc_appcore::host::StartedHost, String>),
     AutoStartFinished(std::result::Result<bool, String>),
-    UpdateCheckFinished(std::result::Result<String, String>),
-    /// 启动时的后台检查：只在有新版本时发出，仅更新文案、不改 busy 状态。
-    UpdateAvailable(String),
+    UpdateCheckFinished(std::result::Result<crate::biz::update_check::UpdateCheck, String>),
+    /// 启动时的后台检查：只在有新版本时发出，不改 busy 状态。
+    UpdateAvailable(crate::biz::update_check::UpdateCheck),
+    /// 修改密码的结果（后台线程）。
+    PasswordChanged(std::result::Result<(), String>),
+    /// 安全密钥的校验值算好了（后台线程：PBKDF2 要算一会儿）。
+    LockKeyReady(std::result::Result<rc_appcore::client_lock::Verifier, String>),
+    /// 解锁校验的结果（后台线程）：密钥对不对。
+    LockVerified(bool),
     WolFinished(String, std::result::Result<String, String>),
     /// 设备证书续签结果（后台线程）。
     CertRenewFinished(std::result::Result<String, String>),
@@ -210,6 +250,9 @@ impl Action {
             Action::AutoStartToggled(_) => Some(Action::AutoStartToggled(on)),
             Action::FileTransferToggled(_) => Some(Action::FileTransferToggled(on)),
             Action::AssistToggled(_) => Some(Action::AssistToggled(on)),
+            Action::UpdateAutoCheckToggled(_) => Some(Action::UpdateAutoCheckToggled(on)),
+            Action::LockAutoAssistToggled(_) => Some(Action::LockAutoAssistToggled(on)),
+            Action::LockAutoStartToggled(_) => Some(Action::LockAutoStartToggled(on)),
             _ => None,
         }
     }
@@ -226,6 +269,35 @@ impl Action {
                 | Action::LockOnExitToggled(_)
                 | Action::AssistToggled(_)
                 | Action::FileTransferToggled(_)
+                | Action::UpdateAutoCheckToggled(_)
+        )
+    }
+
+    /// 客户端安全锁定期间不能做的操作：一切会改动客户端设置的操作，以及退出登录。
+    ///
+    /// 发起远程连接、看设备列表不受影响（与 UU 远程一致：锁定只限制本地设置和退出）。
+    pub(crate) fn is_protected_by_lock(&self) -> bool {
+        matches!(
+            self,
+            Action::Logout
+                | Action::HostToggle(_)
+                | Action::HostRotateCode
+                | Action::HostVerifyModeChanged
+                | Action::HostVerifySave
+                | Action::CertRenew
+                | Action::AssistToggled(_)
+                | Action::FileTransferToggled(_)
+                | Action::LockOnExitToggled(_)
+                | Action::HudToggled(_)
+                | Action::EncryptToggled(_)
+                | Action::AutoStartToggled(_)
+                | Action::QualityChanged
+                | Action::ProxyApply
+                | Action::ProbeServer
+                | Action::SaveServer
+                | Action::OpenLockSettings
+                | Action::LockAutoAssistToggled(_)
+                | Action::LockAutoStartToggled(_)
         )
     }
 }
@@ -318,6 +390,77 @@ mod switch_tests {
         assert!(Action::from_switch(&Action::Logout, true).is_none());
         assert!(Action::from_switch(&Action::RefreshDevices, true).is_none());
         assert!(Action::from_switch(&Action::CopyId, true).is_none());
+    }
+
+    #[test]
+    fn title_bar_and_settings_switches_carry_their_state() {
+        for kind in [
+            Action::UpdateAutoCheckToggled(false),
+            Action::LockAutoAssistToggled(false),
+            Action::LockAutoStartToggled(false),
+        ] {
+            let on = Action::from_switch(&kind, true).expect("开关类操作必须能派发");
+            let off = Action::from_switch(&kind, false).expect("开关类操作必须能派发");
+            assert!(
+                matches!(
+                    (kind, on, off),
+                    (
+                        Action::UpdateAutoCheckToggled(_),
+                        Action::UpdateAutoCheckToggled(true),
+                        Action::UpdateAutoCheckToggled(false)
+                    ) | (
+                        Action::LockAutoAssistToggled(_),
+                        Action::LockAutoAssistToggled(true),
+                        Action::LockAutoAssistToggled(false)
+                    ) | (
+                        Action::LockAutoStartToggled(_),
+                        Action::LockAutoStartToggled(true),
+                        Action::LockAutoStartToggled(false)
+                    )
+                ),
+                "派发出的必须是同一种操作，并带上开关的实际状态"
+            );
+        }
+    }
+
+    #[test]
+    fn lock_blocks_settings_and_logout_but_not_connecting() {
+        let blocked = [
+            Action::Logout,
+            Action::HostToggle(true),
+            Action::HostToggle(false),
+            Action::HostRotateCode,
+            Action::HostVerifyModeChanged,
+            Action::HostVerifySave,
+            Action::AssistToggled(false),
+            Action::AutoStartToggled(true),
+            Action::ProxyApply,
+            Action::LockAutoStartToggled(true),
+        ];
+        for (index, action) in blocked.iter().enumerate() {
+            assert!(
+                action.is_protected_by_lock(),
+                "第 {index} 个操作在锁定期间必须被拦下"
+            );
+        }
+        let allowed = [
+            Action::DeviceConnect("419450905".to_string()),
+            Action::ConnectSubmit,
+            Action::DeviceSearch("pc".to_string()),
+            Action::RefreshDevices,
+            Action::Nav(Page::Devices),
+            Action::OpenAccount,
+            Action::OpenSecurityLock,
+            Action::CopyId,
+            // 找回路径：锁定状态下也允许从解锁弹窗退出登录
+            Action::LockRecoverLogout,
+        ];
+        for (index, action) in allowed.iter().enumerate() {
+            assert!(
+                !action.is_protected_by_lock(),
+                "第 {index} 个操作不该被锁定拦下"
+            );
+        }
     }
 
     #[test]

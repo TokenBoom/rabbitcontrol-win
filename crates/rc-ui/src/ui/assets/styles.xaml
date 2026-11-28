@@ -4,8 +4,9 @@
     RabbitControl 设计 tokens（全应用唯一来源；会话窗口复用同一字典）。
     版式：Caption 12 / Body 14 / Subtitle 16 / Title 20 / Display 28。
     圆角：8（按钮 / 输入）/ 10（行式条目）/ 12（卡片）。
-    交互：按钮一律不带边框线，靠底色分层；悬停渐亮、按下轻微缩放（不靠生硬的描边变化）。
+    交互：按钮默认不带边框线，靠底色分层；悬停渐亮、按下轻微缩放（不靠生硬的描边变化）。
     两套表面：浅色（主窗口）/ 深色（会话窗口，Dark* 前缀）。
+    浅色的层次对齐 UU 远程：标题栏与侧栏是同一块灰底，内容区更浅；卡片白底细描边。
   -->
 
   <!-- ========== 浅色（主窗口） ========== -->
@@ -18,16 +19,21 @@
   <SolidColorBrush x:Key="AccentStrongBrush" Color="#2A5BE6"/>
   <!-- 幽灵按钮悬停时的底色 -->
   <SolidColorBrush x:Key="HoverTintBrush" Color="#F0F3F8"/>
-  <SolidColorBrush x:Key="TextPrimaryBrush" Color="#151E31"/>
-  <SolidColorBrush x:Key="TextSecondaryBrush" Color="#516278"/>
-  <SolidColorBrush x:Key="TextTertiaryBrush" Color="#68768D"/>
+  <SolidColorBrush x:Key="TextPrimaryBrush" Color="#1D2129"/>
+  <SolidColorBrush x:Key="TextSecondaryBrush" Color="#4E5969"/>
+  <SolidColorBrush x:Key="TextTertiaryBrush" Color="#86909C"/>
   <SolidColorBrush x:Key="TextOnPrimaryBrush" Color="#FFFFFF"/>
-  <SolidColorBrush x:Key="DividerBrush" Color="#E9EEF5"/>
-  <SolidColorBrush x:Key="PageBackgroundBrush" Color="#F6F8FB"/>
+  <SolidColorBrush x:Key="DividerBrush" Color="#E5E6EB"/>
+  <SolidColorBrush x:Key="PageBackgroundBrush" Color="#F8FAFC"/>
   <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FFFFFF"/>
-  <SolidColorBrush x:Key="CardBorderBrush" Color="#EDF1F7"/>
+  <SolidColorBrush x:Key="CardBorderBrush" Color="#E5E6EB"/>
   <SolidColorBrush x:Key="CardHoverTintBrush" Color="#F5F8FF"/>
-  <SolidColorBrush x:Key="SidebarBackgroundBrush" Color="#FFFFFF"/>
+  <SolidColorBrush x:Key="SidebarBackgroundBrush" Color="#F0F4F8"/>
+  <!-- 导航项：悬停浅灰；选中 = 灰底 + 紧贴窗口左缘的蓝色竖条（竖条在 NavTemplate 里） -->
+  <SolidColorBrush x:Key="NavHoverBrush" Color="#DFE5EB"/>
+  <SolidColorBrush x:Key="NavActiveBrush" Color="#E5EAF0"/>
+  <!-- 描边按钮的那一圈线 -->
+  <SolidColorBrush x:Key="OutlineLineBrush" Color="#D9DEE5"/>
   <SolidColorBrush x:Key="DangerBrush" Color="#C2403A"/>
   <SolidColorBrush x:Key="SuccessBrush" Color="#12A150"/>
   <SolidColorBrush x:Key="OnlineBrush" Color="#22B573"/>
@@ -89,6 +95,25 @@
   <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="{StaticResource FieldFillColor}"/>
   <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="#D6DEEA"/>
   <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="#346CFF"/>
+
+  <!-- ========== 下拉菜单（标题栏「更多」、设备行「⋯」） ==========
+       MenuFlyout* 是系统菜单模板引用的键：悬停底色换成很浅的灰，文字用正文色而不是纯黑。
+       会话窗口（深色）在它自己的根 Resources 里给出深色版。 -->
+  <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="#FFFFFF"/>
+  <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="#E5E6EB"/>
+  <SolidColorBrush x:Key="MenuFlyoutItemBackground" Color="Transparent"/>
+  <SolidColorBrush x:Key="MenuFlyoutItemBackgroundPointerOver" Color="#F2F3F5"/>
+  <SolidColorBrush x:Key="MenuFlyoutItemBackgroundPressed" Color="#E5E8EB"/>
+  <SolidColorBrush x:Key="MenuFlyoutItemForeground" Color="#1D2129"/>
+  <SolidColorBrush x:Key="MenuFlyoutItemForegroundPointerOver" Color="#1D2129"/>
+  <SolidColorBrush x:Key="MenuFlyoutItemForegroundPressed" Color="#1D2129"/>
+  <SolidColorBrush x:Key="MenuFlyoutSubItemBackground" Color="Transparent"/>
+  <SolidColorBrush x:Key="MenuFlyoutSubItemBackgroundPointerOver" Color="#F2F3F5"/>
+  <SolidColorBrush x:Key="MenuFlyoutSubItemForeground" Color="#1D2129"/>
+  <SolidColorBrush x:Key="MenuFlyoutSubItemForegroundPointerOver" Color="#1D2129"/>
+  <SolidColorBrush x:Key="MenuFlyoutSubItemChevronForeground" Color="#86909C"/>
+  <SolidColorBrush x:Key="MenuFlyoutSeparatorBackground" Color="#ECEDEF"/>
+  <SolidColorBrush x:Key="MenuFlyoutItemKeyboardAcceleratorTextForeground" Color="#86909C"/>
 
   <!-- ========== 字阶 ========== -->
   <Style x:Key="CaptionText" TargetType="TextBlock">
@@ -222,6 +247,133 @@
     </Grid>
   </ControlTemplate>
 
+  <!-- 描边按钮模板（UU 的「复制并分享」这种）：白底 + 一圈细线，悬停时线内填一层浅灰 -->
+  <ControlTemplate x:Key="OutlineButtonTemplate" TargetType="Button">
+    <Grid x:Name="Root" RenderTransformOrigin="0.5,0.5">
+      <VisualStateManager.VisualStateGroups>
+        <VisualStateGroup x:Name="CommonStates">
+          <VisualState x:Name="Normal">
+            <Storyboard>
+              <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.14"/>
+              <DoubleAnimation Storyboard.TargetName="Scale" Storyboard.TargetProperty="ScaleX" To="1" Duration="0:0:0.12"/>
+              <DoubleAnimation Storyboard.TargetName="Scale" Storyboard.TargetProperty="ScaleY" To="1" Duration="0:0:0.12"/>
+            </Storyboard>
+          </VisualState>
+          <VisualState x:Name="PointerOver">
+            <Storyboard>
+              <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.1"/>
+            </Storyboard>
+          </VisualState>
+          <VisualState x:Name="Pressed">
+            <Storyboard>
+              <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.04"/>
+              <DoubleAnimation Storyboard.TargetName="Scale" Storyboard.TargetProperty="ScaleX" To="0.97" Duration="0:0:0.06"/>
+              <DoubleAnimation Storyboard.TargetName="Scale" Storyboard.TargetProperty="ScaleY" To="0.97" Duration="0:0:0.06"/>
+            </Storyboard>
+          </VisualState>
+          <VisualState x:Name="Disabled">
+            <Storyboard>
+              <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Opacity" To="0" Duration="0"/>
+              <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="Opacity" To="0.45" Duration="0"/>
+            </Storyboard>
+          </VisualState>
+        </VisualStateGroup>
+      </VisualStateManager.VisualStateGroups>
+      <Grid.RenderTransform>
+        <ScaleTransform x:Name="Scale"/>
+      </Grid.RenderTransform>
+      <Border x:Name="Bg" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{TemplateBinding CornerRadius}"/>
+      <Border x:Name="Hover" Background="{ThemeResource HoverTintBrush}" CornerRadius="{TemplateBinding CornerRadius}" Margin="1" Opacity="0"/>
+      <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+    </Grid>
+  </ControlTemplate>
+
+  <!-- 导航项模板（对齐 UU）：悬停一层浅灰；选中 = 灰底常显 + 左侧蓝竖条。文字始终是深色，不做反白 -->
+  <ControlTemplate x:Key="NavTemplate" TargetType="ToggleButton">
+    <Grid x:Name="Root">
+      <VisualStateManager.VisualStateGroups>
+        <VisualStateGroup x:Name="CommonStates">
+          <VisualState x:Name="Normal">
+            <Storyboard>
+              <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.14"/>
+              <DoubleAnimation Storyboard.TargetName="Active" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.14"/>
+              <DoubleAnimation Storyboard.TargetName="Bar" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.14"/>
+            </Storyboard>
+          </VisualState>
+          <VisualState x:Name="PointerOver">
+            <Storyboard>
+              <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.08"/>
+            </Storyboard>
+          </VisualState>
+          <VisualState x:Name="Pressed">
+            <Storyboard>
+              <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.04"/>
+            </Storyboard>
+          </VisualState>
+          <VisualState x:Name="Disabled">
+            <Storyboard>
+              <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Opacity" To="0" Duration="0"/>
+              <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="Opacity" To="0.4" Duration="0"/>
+            </Storyboard>
+          </VisualState>
+          <VisualState x:Name="Checked">
+            <Storyboard>
+              <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.14"/>
+              <DoubleAnimation Storyboard.TargetName="Active" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12"/>
+              <DoubleAnimation Storyboard.TargetName="Bar" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12"/>
+            </Storyboard>
+          </VisualState>
+          <VisualState x:Name="CheckedPointerOver">
+            <Storyboard>
+              <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.08"/>
+              <DoubleAnimation Storyboard.TargetName="Active" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.08"/>
+              <DoubleAnimation Storyboard.TargetName="Bar" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.08"/>
+            </Storyboard>
+          </VisualState>
+          <VisualState x:Name="CheckedPressed">
+            <Storyboard>
+              <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.04"/>
+              <DoubleAnimation Storyboard.TargetName="Active" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.04"/>
+              <DoubleAnimation Storyboard.TargetName="Bar" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.04"/>
+            </Storyboard>
+          </VisualState>
+          <VisualState x:Name="CheckedDisabled">
+            <Storyboard>
+              <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Opacity" To="0" Duration="0"/>
+              <DoubleAnimation Storyboard.TargetName="Active" Storyboard.TargetProperty="Opacity" To="1" Duration="0"/>
+              <DoubleAnimation Storyboard.TargetName="Bar" Storyboard.TargetProperty="Opacity" To="1" Duration="0"/>
+              <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="Opacity" To="0.4" Duration="0"/>
+            </Storyboard>
+          </VisualState>
+        </VisualStateGroup>
+        <!-- 键盘焦点：一圈细的品牌色描边（鼠标点出来的焦点不显示） -->
+        <VisualStateGroup x:Name="FocusStates">
+          <VisualState x:Name="Focused">
+            <Storyboard>
+              <DoubleAnimation Storyboard.TargetName="Focus" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.08"/>
+            </Storyboard>
+          </VisualState>
+          <VisualState x:Name="PointerFocused">
+            <Storyboard>
+              <DoubleAnimation Storyboard.TargetName="Focus" Storyboard.TargetProperty="Opacity" To="0" Duration="0"/>
+            </Storyboard>
+          </VisualState>
+          <VisualState x:Name="Unfocused">
+            <Storyboard>
+              <DoubleAnimation Storyboard.TargetName="Focus" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.1"/>
+            </Storyboard>
+          </VisualState>
+        </VisualStateGroup>
+      </VisualStateManager.VisualStateGroups>
+      <Border x:Name="Active" Background="{TemplateBinding BorderBrush}" CornerRadius="{TemplateBinding CornerRadius}" Opacity="0"/>
+      <Border x:Name="Hover" Background="{TemplateBinding Background}" CornerRadius="{TemplateBinding CornerRadius}" Opacity="0"/>
+      <!-- 竖条画在导航项自己的范围之外、紧贴窗口左缘（导航项的左外边距就是给它留的） -->
+      <Border x:Name="Bar" Width="4" Height="16" CornerRadius="2" HorizontalAlignment="Left" Margin="-8,0,0,0" Background="{ThemeResource PrimaryBrush}" Opacity="0"/>
+      <Border x:Name="Focus" BorderBrush="{ThemeResource PrimaryBrush}" BorderThickness="2" CornerRadius="{TemplateBinding CornerRadius}" Opacity="0"/>
+      <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+    </Grid>
+  </ControlTemplate>
+
   <!-- 切换按钮模板（分段 tab / 面板开关）：在幽灵模板之上多一层「选中薄雾」，选中时渐显 -->
   <ControlTemplate x:Key="GhostToggleTemplate" TargetType="ToggleButton">
     <Grid x:Name="Root" RenderTransformOrigin="0.5,0.5">
@@ -327,6 +479,18 @@
     <Setter Property="FontSize" Value="13"/>
     <Setter Property="FontWeight" Value="SemiBold"/>
     <Setter Property="Template" Value="{StaticResource SolidButtonTemplate}"/>
+  </Style>
+  <!-- 描边按钮（「复制并分享」「立即解锁」）：白底 + 一圈细线 -->
+  <Style x:Key="OutlineButton" TargetType="Button">
+    <Setter Property="Height" Value="40"/>
+    <Setter Property="Padding" Value="20,0"/>
+    <Setter Property="CornerRadius" Value="8"/>
+    <Setter Property="Background" Value="{ThemeResource CardBackgroundBrush}"/>
+    <Setter Property="Foreground" Value="{ThemeResource TextPrimaryBrush}"/>
+    <Setter Property="BorderBrush" Value="{ThemeResource OutlineLineBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="FontSize" Value="14"/>
+    <Setter Property="Template" Value="{StaticResource OutlineButtonTemplate}"/>
   </Style>
   <!-- 文字按钮（「退出」「服务器设置」）：平时只有字，悬停出一层浅底 -->
   <Style x:Key="LinkButton" TargetType="Button">
@@ -467,6 +631,17 @@
     <Setter Property="Background" Value="{ThemeResource HoverTintBrush}"/>
     <Setter Property="Foreground" Value="{ThemeResource TextSecondaryBrush}"/>
   </Style>
+  <!-- 标题栏右侧的图标按钮（更多 / 账号 / 新版本提醒）：40×32，图标深灰 -->
+  <Style x:Key="CaptionIconButton" TargetType="Button" BasedOn="{StaticResource LightGhostIconButton}">
+    <Setter Property="Width" Value="40"/>
+    <Setter Property="Height" Value="32"/>
+    <Setter Property="Foreground" Value="{ThemeResource TextPrimaryBrush}"/>
+  </Style>
+  <!-- 危险动作的文字按钮（退出登录）：红字，悬停一层很浅的红 -->
+  <Style x:Key="DangerLinkButton" TargetType="Button" BasedOn="{StaticResource LinkButton}">
+    <Setter Property="Foreground" Value="{ThemeResource DangerBrush}"/>
+    <Setter Property="BorderBrush" Value="#FBECEC"/>
+  </Style>
   <!-- 标题栏按钮：46×36（贴合 40px 标题行；48 高会被行裁剪而不可见） -->
   <Style x:Key="CaptionButton" TargetType="Button">
     <Setter Property="Width" Value="46"/>
@@ -548,18 +723,21 @@
     </Setter>
   </Style>
 
-  <!-- 导航项：UU 风格，选中态浅蓝底 + 左侧蓝色竖条 -->
+  <!-- 导航项（对齐 UU）：悬停浅灰，选中 = 灰底 + 左侧蓝竖条，文字始终深色 -->
   <Style x:Key="NavItem" TargetType="ToggleButton">
     <Setter Property="Height" Value="40"/>
-    <Setter Property="Margin" Value="8,1"/>
+    <Setter Property="Margin" Value="10,2,6,2"/>
     <Setter Property="Padding" Value="12,0"/>
-    <Setter Property="CornerRadius" Value="8"/>
-    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="CornerRadius" Value="6"/>
+    <Setter Property="Background" Value="{ThemeResource NavHoverBrush}"/>
+    <Setter Property="BorderBrush" Value="{ThemeResource NavActiveBrush}"/>
     <Setter Property="BorderThickness" Value="0"/>
     <Setter Property="HorizontalAlignment" Value="Stretch"/>
     <Setter Property="HorizontalContentAlignment" Value="Left"/>
-    <Setter Property="FontSize" Value="13"/>
-    <Setter Property="Foreground" Value="{ThemeResource TextSecondaryBrush}"/>
+    <Setter Property="FontSize" Value="14"/>
+    <Setter Property="Foreground" Value="{ThemeResource TextPrimaryBrush}"/>
+    <Setter Property="UseSystemFocusVisuals" Value="False"/>
+    <Setter Property="Template" Value="{StaticResource NavTemplate}"/>
   </Style>
 
   <!-- 卡片 -->
@@ -569,6 +747,14 @@
     <Setter Property="BorderThickness" Value="1"/>
     <Setter Property="CornerRadius" Value="12"/>
     <Setter Property="Padding" Value="20"/>
+  </Style>
+  <!-- 分区卡片（协助页的「本设备」「远控伙伴设备」，对齐 UU）：标题行与内容之间一条分隔线，自身不带内边距 -->
+  <Style x:Key="SectionCardBorder" TargetType="Border">
+    <Setter Property="Background" Value="{ThemeResource CardBackgroundBrush}"/>
+    <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="10"/>
+    <Setter Property="Padding" Value="0"/>
   </Style>
   <!-- 深色卡片（会话窗口里的表单 / 弹层） -->
   <Style x:Key="DarkCardBorder" TargetType="Border">

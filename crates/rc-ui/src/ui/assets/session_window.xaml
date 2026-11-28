@@ -14,6 +14,22 @@
     <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="{StaticResource FieldFillColor}"/>
     <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="#2B3442"/>
     <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="#5B86FF"/>
+    <!-- 下拉菜单的深色版（画质菜单）：面板与卡片同色，悬停抬一档，不用系统那种发灰的白 -->
+    <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="#171D27"/>
+    <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="#2B3442"/>
+    <SolidColorBrush x:Key="MenuFlyoutItemBackground" Color="Transparent"/>
+    <SolidColorBrush x:Key="MenuFlyoutItemBackgroundPointerOver" Color="#222A37"/>
+    <SolidColorBrush x:Key="MenuFlyoutItemBackgroundPressed" Color="#2B3442"/>
+    <SolidColorBrush x:Key="MenuFlyoutItemForeground" Color="#E7ECF4"/>
+    <SolidColorBrush x:Key="MenuFlyoutItemForegroundPointerOver" Color="#E7ECF4"/>
+    <SolidColorBrush x:Key="MenuFlyoutItemForegroundPressed" Color="#E7ECF4"/>
+    <SolidColorBrush x:Key="MenuFlyoutSubItemBackground" Color="Transparent"/>
+    <SolidColorBrush x:Key="MenuFlyoutSubItemBackgroundPointerOver" Color="#222A37"/>
+    <SolidColorBrush x:Key="MenuFlyoutSubItemForeground" Color="#E7ECF4"/>
+    <SolidColorBrush x:Key="MenuFlyoutSubItemForegroundPointerOver" Color="#E7ECF4"/>
+    <SolidColorBrush x:Key="MenuFlyoutSubItemChevronForeground" Color="#6C7A90"/>
+    <SolidColorBrush x:Key="MenuFlyoutSeparatorBackground" Color="#1E2530"/>
+    <SolidColorBrush x:Key="MenuFlyoutItemKeyboardAcceleratorTextForeground" Color="#6C7A90"/>
     <!-- 工具面板滑入 -->
     <Storyboard x:Name="PanelIn">
       <DoubleAnimation Storyboard.TargetName="ToolPanelContent" Storyboard.TargetProperty="Opacity" From="0" To="1" Duration="0:0:0.18">

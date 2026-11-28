@@ -109,6 +109,13 @@ fn compatible_types(tag: &str) -> Option<&'static [&'static str]> {
         ],
         "FontIcon" => &["FontIcon", "IconElement", "FrameworkElement", "UIElement"],
         "MenuFlyout" => &["MenuFlyout", "FlyoutBase", "DependencyObject"],
+        "MenuFlyoutItem" => &[
+            "MenuFlyoutItem",
+            "MenuFlyoutItemBase",
+            "Control",
+            "FrameworkElement",
+            "UIElement",
+        ],
         "Storyboard" => &["Storyboard", "Timeline", "DependencyObject"],
         _ => return None,
     };

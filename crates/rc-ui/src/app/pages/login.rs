@@ -72,18 +72,17 @@ impl App {
     }
 
     pub(crate) fn open_main(&mut self, account: &AccountSession) -> Result<()> {
-        // 登录成功：恢复标题栏元素（登录浮层隐藏后标题栏可见）
-        let _ = self.set_visible("AppTitle", true);
-        let _ = self.set_visible("TitleLogo", true);
-        let _ = self.set_visible("Minimize", true);
-        let _ = self.set_visible("CloseWindow", true);
+        // 登录成功：标题栏放回来（登录浮层隐藏后可见，含右上角的更多 / 账号 / 新版本提醒）
+        let _ = self.set_title_bar_visible(true);
         ctx(
             "清空密码框",
             self.find::<PasswordBox>("Password")?.SetPassword(""),
         )?;
         ctx("清空登录提示", self.label("LoginError", ""))?;
-        ctx("显示账号", self.label("AccountEmail", &account.email))?;
-        ctx("账号提示", self.tooltip("AccountEmail", &account.email))?;
+        self.logged_in = true;
+        // 先恢复这个账号的安全锁定状态：后面的回填开关会发出 `Toggled` 回声，
+        // 锁定状态下要在「静默窗口」里把它们丢掉，而不是当成有人在改设置
+        ctx("恢复安全锁定状态", self.restore_client_lock())?;
         // 用登录响应携带的数据即时渲染首屏，REST 全量随后补齐。
         self.devices = account.devices.clone();
         if let Some(id) = account.device_id.clone() {
@@ -92,7 +91,6 @@ impl App {
                 self.label("LocalIdText", &server_config::format_device_id(&id)),
             )?;
         }
-        self.logged_in = true;
         ctx("隐藏登录浮层", self.set_visible("LoginOverlay", false))?;
         ctx("显示主界面", self.set_visible("MainShell", true))?;
         ctx("记录 DPI", self.apply_scale())?;
@@ -136,6 +134,10 @@ impl App {
         self.signal_online = false;
         self.signal_device_id = None;
         self.devices_refreshing = false;
+        // 锁定状态只在登录期间有意义：回登录页就清掉，关窗也不再被拦
+        self.reset_client_lock();
+        let _ = self.close_modal();
+        let _ = self.set_title_bar_visible(false);
         self.set_visible("MainShell", false)?;
         self.set_visible("LoginOverlay", true)?;
         self.set_visible("LoginView", true)?;
@@ -171,12 +173,6 @@ impl App {
             events.send(Event::SaveServerFinished(result));
         });
         Ok(())
-    }
-
-    /// 协助页上设备 ID 旁边的一句即时反馈（3 秒后自己消失）。
-    pub(crate) fn show_local_notice(&mut self, text: &str) -> Result<()> {
-        self.local_notice_until = Some(self.tick + 60);
-        self.label("LocalNotice", text)
     }
 
     pub(crate) fn update_caption(&self) -> Result<()> {

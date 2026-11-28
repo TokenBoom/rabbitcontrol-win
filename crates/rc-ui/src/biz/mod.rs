@@ -5,6 +5,7 @@
 pub mod auth;
 pub mod autostart;
 pub mod history;
+pub mod local_prefs;
 pub mod proxy_cfg;
 pub mod session;
 pub mod settings;

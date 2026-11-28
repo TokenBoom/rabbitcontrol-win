@@ -7,15 +7,35 @@ use rc_client_core::server_config;
 use windows::core::{Interface, HSTRING};
 use windows::UI::Xaml::Controls::Primitives::ButtonBase;
 use windows::UI::Xaml::Controls::Primitives::ToggleButton;
-use windows::UI::Xaml::Controls::{StackPanel, TextBlock};
-use windows::UI::Xaml::FrameworkElement;
+use windows::UI::Xaml::Controls::{Control, StackPanel, TextBlock, TextBox};
 use windows::UI::Xaml::RoutedEventHandler;
+use windows::UI::Xaml::{FrameworkElement, VisualStateManager};
 
 use crate::app::{as_ui_element, panel_children, set_checked};
 use crate::biz::history;
 use crate::ui::widgets;
 
 impl App {
+    /// 「连接」按钮能不能点，跟着伙伴 ID 输入框走。
+    ///
+    /// `force` = 把视觉状态重新推一遍。自定义模板在「一加载就是禁用」时不会进 Disabled 状态，
+    /// 按钮会一直亮着像能点；所以每次进这一页都按当前可用态把状态机推到对应的状态。
+    pub(crate) fn sync_connect_enabled(&self, force: bool) -> Result<()> {
+        let digits: String = self
+            .find_opt::<TextBox>("PeerCodeBox")
+            .and_then(|box_| box_.Text().ok())
+            .map(|text| super::super::digit_of(&text.to_string()))
+            .unwrap_or_default();
+        let enabled = digits.len() == 9;
+        let connect: Control = self.find("ConnectPeerButton")?;
+        connect.SetIsEnabled(enabled)?;
+        if force {
+            let state = if enabled { "Normal" } else { "Disabled" };
+            VisualStateManager::GoToState(&connect, HSTRING::from(state), false)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn render_history(&mut self) -> Result<()> {
         if let Some(recent_tab) = self.find_opt::<ToggleButton>("HistoryTabRecent") {
             set_checked(&recent_tab, !self.history_tab_fav)?;

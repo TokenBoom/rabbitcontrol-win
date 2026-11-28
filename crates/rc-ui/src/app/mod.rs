@@ -130,8 +130,10 @@ pub struct App {
     terminal_toast_until: Option<u64>,
     /// 设备搜索框的内容（小写），空 = 不过滤。
     device_filter: String,
-    /// 协助页上「已复制」这类即时提示到点清掉的 tick。
-    local_notice_until: Option<u64>,
+    /// 标题栏、弹窗、轻提示这一层「外壳」的状态。
+    chrome: pages::chrome::Chrome,
+    /// 客户端安全锁定（当前登录的账号）。
+    client_lock: pages::client_lock::ClientLock,
     /// 工具面板各 tab 的宽度（逻辑像素）；拖分隔条时改。
     tool_widths: [f64; 3],
     /// 分隔条拖动中：按下时的面板宽度。
@@ -199,6 +201,7 @@ use rc_appcore::signal_runtime::SignalRuntime;
 use crate::biz::{
     auth::{self, AuthRuntime},
     history::{self, TargetHistory},
+    local_prefs,
     session::{self as sess, SessionView},
     settings,
 };
@@ -217,6 +220,7 @@ impl App {
         // 已保存的出站代理必须先于登录 / 信令 / 更新检查生效
         rc_client_core::proxy::set_global_proxy_config(prefs.proxy.clone());
         let allow_file_transfer = prefs.allow_assist_file_transfer;
+        let local_prefs = local_prefs::LocalPrefs::load_from(&local_prefs::LocalPrefs::path());
         let history_store = TargetHistory::load_from(&history::default_history_path());
         let mut app = Self {
             root,
@@ -274,7 +278,11 @@ impl App {
             terminal_resize_due: None,
             terminal_toast_until: None,
             device_filter: String::new(),
-            local_notice_until: None,
+            chrome: pages::chrome::Chrome {
+                local_prefs,
+                ..Default::default()
+            },
+            client_lock: pages::client_lock::ClientLock::default(),
             tool_widths: pages::tools::DEFAULT_TOOL_WIDTHS,
             tool_splitter_drag: None,
             #[cfg(debug_assertions)]
@@ -301,11 +309,8 @@ impl App {
         })?;
         eprintln!("[App::new] wire OK");
         app.apply_brand();
-        // 登录浮层覆盖全窗：隐藏标题栏文字/图标（沉浸式）
-        let _ = app.set_visible("AppTitle", false);
-        let _ = app.set_visible("TitleLogo", false);
-        let _ = app.set_visible("Minimize", false);
-        let _ = app.set_visible("CloseWindow", false);
+        // 登录浮层覆盖全窗：标题栏整个收起来（沉浸式）
+        let _ = app.set_title_bar_visible(false);
         crate::ui::session_window::set_main_hwnd(shell.hwnd());
         {
             let events = app.sender();
@@ -314,15 +319,15 @@ impl App {
                 events.send(Event::AutoStartFinished(Ok(running)));
             });
         }
-        // M6.3a 启动时后台自动检查更新：只在有新版本时提示，其余情况静默。
+        // 启动时后台自动检查更新（可在更新弹窗里关掉）：只在有新版本时提示，其余情况静默。
         // 走独立事件，不经过 UpdateCheckFinished——那个会 set_busy(false)，
         // 可能提前解禁正在进行的登录 / 恢复会话。
-        {
+        if app.chrome.local_prefs.auto_check_update {
             let events = app.sender();
             thread::spawn(move || {
                 if let Ok(check) = crate::biz::update_check::check() {
                     if check.is_newer {
-                        events.send(Event::UpdateAvailable(check.status_text()));
+                        events.send(Event::UpdateAvailable(check));
                     }
                 }
             });
@@ -487,7 +492,7 @@ impl App {
         self.click("HostReject", Action::HostReject)?;
         self.click("ProbeServer", Action::ProbeServer)?;
         self.click("BannerDisconnect", Action::BannerDisconnect)?;
-        Ok(())
+        self.wire_chrome()
     }
 
     /// M3.6：会话窗口创建后的专属接线（元素全部位于会话窗口根；
@@ -815,7 +820,8 @@ impl App {
                     .ctx(|| format!("设置 {name} {}", if busy { "禁用" } else { "启用" }))?;
             }
         }
-        Ok(())
+        // 锁定优先于忙碌：忙碌时本来就该禁用的控件，不能在解锁时被顺手启用
+        self.apply_client_lock_ui()
     }
 
     pub fn dispatch(&mut self) -> Result<()> {
@@ -840,12 +846,25 @@ impl App {
         if crate::ui::shell::take_foreground_gained() && self.logged_in {
             self.refresh_devices_if_stale()?;
         }
+        // 客户端安全锁定中有人点了关窗：不退出，改成弹解锁框
+        if crate::ui::shell::take_close_blocked() && self.client_lock.locked {
+            self.explain_lock()?;
+        }
         while let Ok(event) = self.inbox.try_recv() {
             eprintln!("[dispatch] processing event...");
             match event {
                 // 轻量开关类操作在忙碌时也照常生效：它们的控件此刻并未禁用，拦下来只会让
                 // 开关显示的状态和实际对不上。耗时流程的控件已被禁用，不会走到这里。
                 Event::Click(action) if self.busy && !action.is_light_toggle() => {}
+                // 程序回填开关时开关自己也会发事件（延迟到动画之后才到）：锁定状态下
+                // 这类回声在 login 后的一小段时间里静默丢弃，不该当成「有人想改设置」
+                Event::Click(action) if self.client_lock.silences(&action, self.tick) => {}
+                // 客户端安全锁定：会改动设置的操作一律拦下，弹解锁框说明原因
+                Event::Click(action)
+                    if self.client_lock.locked && action.is_protected_by_lock() =>
+                {
+                    self.explain_lock()?
+                }
                 Event::Click(action) => self.on_click(action)?,
                 Event::RestoreFinished(result) => {
                     self.set_busy(false)?;
@@ -959,14 +978,11 @@ impl App {
                     };
                     self.label("DevicesStatus", &text)?;
                 }
-                Event::UpdateAvailable(text) => self.label("UpdateStatus", &text)?,
-                Event::UpdateCheckFinished(result) => {
-                    self.set_busy(false)?;
-                    match result {
-                        Ok(text) => self.label("UpdateStatus", &text)?,
-                        Err(err) => self.label("UpdateStatus", &err)?,
-                    }
-                }
+                Event::UpdateAvailable(check) => self.on_update_available(check)?,
+                Event::UpdateCheckFinished(result) => self.on_update_check_finished(result)?,
+                Event::PasswordChanged(result) => self.on_password_changed(result)?,
+                Event::LockKeyReady(result) => self.on_lock_key_ready(result)?,
+                Event::LockVerified(ok) => self.on_lock_verified(ok)?,
                 Event::AutoStartFinished(result) => {
                     self.set_busy(false)?;
                     match result {
@@ -990,13 +1006,13 @@ impl App {
                     match result {
                         Ok(started) => {
                             self.host_rt.install(started);
-                            self.label("HostError", "")?;
+                            self.set_host_error("")?;
                         }
                         Err(err) => {
                             // 没起来就不能让开关显示为「开」：状态与落盘保持一致
                             persist_host_enabled(false);
                             let _ = self.set_switch_on("HostSwitch", false);
-                            self.label("HostError", &format!("启动失败：{err}"))?;
+                            self.set_host_error(&format!("启动失败：{err}"))?;
                         }
                     }
                 }
@@ -1049,6 +1065,7 @@ impl App {
                     self.host_session_start_tick = self.tick;
                     self.host_rt.connected_peer = Some(remote_addr);
                     self.set_visible("HostBanner", true)?;
+                    self.on_host_assist_active(true)?;
                 }
                 rc_client_core::host_bridge::HostUpdate::OwnerConnected { remote_addr, .. } => {
                     self.approval_generation = None;
@@ -1056,12 +1073,15 @@ impl App {
                     self.host_session_start_tick = self.tick;
                     self.host_rt.connected_peer = Some(remote_addr);
                     self.set_visible("HostBanner", true)?;
+                    self.on_host_assist_active(true)?;
                 }
                 rc_client_core::host_bridge::HostUpdate::ClientDisconnected { .. } => {
                     self.set_visible("HostBanner", false)?;
+                    self.on_host_assist_active(false)?;
                 }
                 rc_client_core::host_bridge::HostUpdate::Stopped => {
                     self.set_visible("HostBanner", false)?;
+                    self.on_host_assist_active(false)?;
                     self.refresh_host_code()?;
                 }
                 _ => {}
@@ -1081,19 +1101,6 @@ impl App {
             );
         }
         Ok(())
-    }
-
-    /// 把当前临时验证码刷到「开始协助」页的码标签上；被控没开时显示占位。
-    fn refresh_host_code(&mut self) -> Result<()> {
-        let code = self.host_rt.temp_code.clone();
-        self.label(
-            "HostCode",
-            if code.is_empty() {
-                "开启后显示"
-            } else {
-                &code
-            },
-        )
     }
 
     /// 信令客户端换了一个（重建 / 停止）后同步给被控服务（core v0.2.6+）。
@@ -1123,26 +1130,21 @@ impl App {
             self.host_rt.stop();
             self.refresh_host_code()?;
             self.set_visible("HostBanner", false)?;
-            self.label("HostError", "")?;
+            self.set_host_error("")?;
             return Ok(());
         }
-        let password = self
-            .find_opt::<windows::UI::Xaml::Controls::PasswordBox>("HostPassword")
-            .and_then(|b| b.Password().ok())
-            .map(|s| s.to_string())
-            .filter(|p| !p.is_empty());
-        // 自定义访问密码落盘（留空 = 回到临时码）：后台被控进程接管时沿用同一个
-        let patch = match &password {
-            Some(custom) => rc_client_core::app_prefs::SecurityPrefsPatch {
-                custom_host_password: Some(custom.clone()),
-                ..Default::default()
-            },
-            None => rc_client_core::app_prefs::SecurityPrefsPatch {
-                clear_custom_host_password: Some(true),
-                ..Default::default()
-            },
+        // 自定义访问密码以设置页「保存密码」存下的那份为准（验证方式是临时验证码、或者没存过，
+        // 就用临时码）；后台被控进程接管时沿用同一份偏好
+        let password = if self.host_verify_custom.unwrap_or(false) {
+            self.prefs
+                .lock()
+                .unwrap()
+                .custom_host_password
+                .clone()
+                .filter(|custom| !custom.is_empty())
+        } else {
+            None
         };
-        self.save_prefs_patch(move |prefs| prefs.apply_security_patch(patch))?;
         let manager = self.auth.manager();
         let events = self.sender();
         let signal_client = self.runtime.signal_client();
@@ -1198,13 +1200,7 @@ impl App {
         }
         eprintln!("[on_tick] logged_in");
         self.tick += 1;
-        if self
-            .local_notice_until
-            .is_some_and(|until| self.tick >= until)
-        {
-            self.local_notice_until = None;
-            let _ = self.label("LocalNotice", "");
-        }
+        self.tick_toast()?;
         // 工具面板开着时每半秒按窗口的可用范围重夹一次面板宽度（窗口拉大 / 缩小后跟上）
         if self.tool_panel_visible && self.tick % 10 == 0 {
             self.apply_tool_width()?;
@@ -1472,9 +1468,9 @@ impl App {
                             &id,
                             &self.host_rt.temp_code,
                         ));
-                        self.show_local_notice("已复制 ID 与验证码")?;
+                        self.show_toast("已复制 ID 与验证码")?;
                     }
-                    None => self.show_local_notice("本机设备码尚未分配")?,
+                    None => self.show_toast("本机设备码尚未分配")?,
                 }
                 Ok(())
             }
@@ -1562,16 +1558,7 @@ impl App {
             Action::PortmapAdd => self.on_portmap_add(),
             Action::PortmapRule(id, op) => self.on_portmap_rule(id, op),
             Action::PromptOk => self.on_prompt_ok(),
-            Action::CheckUpdate => {
-                let events = self.sender();
-                self.set_busy(true)?;
-                self.label("UpdateStatus", "正在检查…")?;
-                thread::spawn(move || {
-                    let result = crate::biz::update_check::check().map(|check| check.status_text());
-                    events.send(Event::UpdateCheckFinished(result));
-                });
-                Ok(())
-            }
+            Action::CheckUpdate => self.on_check_update(),
             Action::ProxyApply => {
                 let input = self
                     .find_opt::<windows::UI::Xaml::Controls::TextBox>("ProxyUrl")
@@ -1715,6 +1702,41 @@ impl App {
             Action::SettingsTab(index) => {
                 self.apply_settings_tab(index)?;
                 Ok(())
+            }
+            // ===== 标题栏与弹窗（流程在 pages/chrome.rs） =====
+            Action::OpenAccount => self.on_open_account(),
+            Action::OpenChangePassword => self.on_open_change_password(),
+            Action::ChangePasswordSubmit => self.on_change_password_submit(),
+            Action::ChangePasswordCancel => self.on_open_account(),
+            Action::OpenAbout => self.on_open_about(),
+            Action::OpenFeedback | Action::OpenIssues => {
+                self.close_modal()?;
+                self.open_url(crate::biz::update_check::ISSUES_URL)
+            }
+            Action::OpenRepo => {
+                self.close_modal()?;
+                self.open_url(crate::biz::update_check::REPO_URL)
+            }
+            Action::OpenUpdate => self.on_open_update(),
+            Action::UpdateRetry => self.on_check_update(),
+            Action::UpdateDownload => self.open_update_link(true),
+            Action::UpdateOpenPage => self.open_update_link(false),
+            Action::UpdateAutoCheckToggled(on) => self.on_update_auto_check_toggled(on),
+            Action::ModalClose => self.on_lock_dialog_dismissed(),
+            // ===== 客户端安全锁定（流程在 pages/client_lock.rs） =====
+            Action::OpenSecurityLock => self.on_open_security_lock(),
+            Action::OpenLockSettings => self.on_open_lock_settings(),
+            Action::LockSetupSubmit => self.on_lock_setup_submit(),
+            Action::LockSetupCancel => self.close_modal(),
+            Action::LockUnlockSubmit => self.on_lock_unlock_submit(),
+            Action::LockRecoverLogout => self.on_lock_recover_logout(),
+            Action::LockAutoAssistToggled(on) => self.on_lock_auto_assist_toggled(on),
+            Action::LockAutoStartToggled(on) => self.on_lock_auto_start_toggled(on),
+            Action::ToggleHostCodeVisibility => self.on_toggle_host_code_visibility(),
+            // 验证方式旁边的齿轮：去设置页的「安全」tab 改自定义密码
+            Action::OpenVerifySettings => {
+                self.show_page(Page::Settings)?;
+                self.apply_settings_tab(1)
             }
             Action::QualityChanged => {
                 let selector: windows::UI::Xaml::Controls::Primitives::Selector =

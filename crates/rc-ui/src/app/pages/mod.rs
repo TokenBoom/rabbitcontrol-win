@@ -1,6 +1,11 @@
 //! 页面子模块：各页面行为与渲染（`impl App` 跨文件分块）。
+//!
+//! 另有两块不属于单个页面：[`chrome`]（标题栏、弹窗、轻提示）与
+//! [`client_lock`]（客户端安全锁定的流程）。
 
 pub mod assist;
+pub mod chrome;
+pub mod client_lock;
 pub mod devices;
 pub mod favorites;
 pub mod login;
@@ -27,6 +32,7 @@ impl App {
             self.render_favorites()?;
         }
         if page == Page::Assist {
+            self.sync_connect_enabled(true)?;
             self.render_history()?;
         }
         if page == Page::Settings {
@@ -47,6 +53,6 @@ impl App {
                 set_checked(&button, page == target)?;
             }
         }
-        Ok(())
+        self.paint_nav_icons(page)
     }
 }

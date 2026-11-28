@@ -125,8 +125,8 @@ impl App {
         self.refresh_cert_status()
     }
 
-    /// 把「被控验证方式」下拉与随附控件摆成指定模式；`remember` = 同时记住为当前模式
-    /// （载入设置时用，免得下拉的变更事件被当成用户操作）。
+    /// 把「被控验证方式」下拉与随附控件摆成指定模式（下拉在本设备卡片上，自定义密码的编辑在设置页）。
+    /// 同时记住为当前模式——载入设置时用，免得下拉的变更事件被当成用户操作。
     fn show_host_verify_mode(&mut self, custom: bool) -> Result<()> {
         self.host_verify_custom = Some(custom);
         if let Some(combo) = self.find_opt::<ComboBox>("HostVerifyMode") {
@@ -138,14 +138,16 @@ impl App {
             })?;
         }
         self.set_visible("HostVerifyCustomPanel", custom)?;
-        self.set_visible("HostRotateCodeButton", !custom)
+        self.set_visible("HostRotateCodeButton", !custom)?;
+        // 本设备卡片：临时验证码才有「换一个」，自定义密码只有「去设置里改」
+        self.set_visible("AssistRotateCode", !custom)?;
+        self.set_visible("AssistVerifySettings", custom)?;
+        self.client_lock.host_code_revealed = false;
+        self.refresh_host_code()
     }
 
-    /// 设备页与设置页两处都能填自定义访问密码：一处改了，另一处跟着回填。
+    /// 设置页的自定义访问密码输入框回填成已保存的那份。
     fn sync_host_password_box(&self, password: Option<&str>) -> Result<()> {
-        if let Some(box_) = self.find_opt::<PasswordBox>("HostPassword") {
-            box_.SetPassword(password.unwrap_or_default())?;
-        }
         if let Some(box_) = self.find_opt::<PasswordBox>("HostVerifyPassword") {
             box_.SetPassword(password.unwrap_or_default())?;
         }
@@ -221,9 +223,7 @@ impl App {
         }
         if custom {
             // 选了自定义密码只是把输入框摆出来；密码要点「保存密码」才生效
-            self.host_verify_custom = Some(true);
-            self.set_visible("HostVerifyCustomPanel", true)?;
-            return self.set_visible("HostRotateCodeButton", false);
+            return self.show_host_verify_mode(true);
         }
         // 回到临时验证码：清掉自定义密码；被控服务在跑就立刻换一个新的临时码
         let patch = SecurityPrefsPatch {
@@ -236,15 +236,13 @@ impl App {
         {
             return self.show_host_verify_mode(true);
         }
-        self.host_verify_custom = Some(false);
         self.sync_host_password_box(None)?;
-        self.set_visible("HostVerifyCustomPanel", false)?;
-        self.set_visible("HostRotateCodeButton", true)?;
+        self.show_host_verify_mode(false)?;
         if self.host_rt.handle.is_some() {
             self.host_rt.set_password_mode(None);
             self.refresh_host_code()?;
         }
-        Ok(())
+        self.show_toast("已切换为临时验证码")
     }
 
     /// 设置页「保存密码」：写入偏好；被控服务在跑就对下一次握手生效。
@@ -279,14 +277,14 @@ impl App {
         Ok(())
     }
 
-    /// 设置页「刷新临时验证码」：被控服务在跑才有的刷；刷完立刻生效。
+    /// 「刷新临时验证码」（本设备卡片与设置页都能点）：被控服务在跑才有的刷；刷完立刻生效。
     pub(crate) fn on_host_rotate_code(&mut self) -> Result<()> {
         if self.host_rt.handle.is_none() {
-            return self.label("SecurityStatus", "被控未开启，没有可刷新的临时验证码");
+            return self.show_toast("被控未开启，没有可刷新的临时验证码");
         }
         self.host_rt.set_password_mode(None);
         self.refresh_host_code()?;
-        self.label("SecurityStatus", "临时验证码已刷新，旧码立即作废")
+        self.show_toast("临时验证码已刷新，旧码立即作废")
     }
 
     /// 设置页「立即续签」：后台清掉旧证书、重新绑定并签发。
