@@ -129,6 +129,40 @@ pub(crate) struct SessionKeyEvent {
     pub(crate) pressed: bool,
 }
 
+impl Action {
+    /// 开关类操作：由开关的 `Toggled` 事件派发，`on` = 开关当前是否打开。
+    ///
+    /// 返回 `None` 表示这个操作不是开关类操作——接线时必须报错，不能兜底成别的操作
+    /// （曾经兜底成「切换性能 HUD」，被控 / 自启 / 文件互传开关因此全都无效）。
+    pub(crate) fn from_switch(kind: &Action, on: bool) -> Option<Action> {
+        match kind {
+            Action::HudToggled(_) => Some(Action::HudToggled(on)),
+            Action::EncryptToggled(_) => Some(Action::EncryptToggled(on)),
+            Action::LockOnExitToggled(_) => Some(Action::LockOnExitToggled(on)),
+            Action::HostToggle(_) => Some(Action::HostToggle(on)),
+            Action::AutoStartToggled(_) => Some(Action::AutoStartToggled(on)),
+            Action::FileTransferToggled(_) => Some(Action::FileTransferToggled(on)),
+            Action::AssistToggled(_) => Some(Action::AssistToggled(on)),
+            _ => None,
+        }
+    }
+
+    /// 轻量开关类操作：不发起耗时流程，主界面忙碌时也应立即生效。
+    ///
+    /// 这些开关在忙碌时并未禁用；若把它们的点击拦下，开关显示的状态就和实际对不上。
+    /// 耗时流程（登录 / 刷新 / 连接 / 被控开关 / 自启）的控件在忙碌时被禁用，走不到这里。
+    pub(crate) fn is_light_toggle(&self) -> bool {
+        matches!(
+            self,
+            Action::HudToggled(_)
+                | Action::EncryptToggled(_)
+                | Action::LockOnExitToggled(_)
+                | Action::AssistToggled(_)
+                | Action::FileTransferToggled(_)
+        )
+    }
+}
+
 /// 全局禁用控件清单（busy 态）；缺失的条目自动跳过。
 
 #[derive(Clone)]
@@ -149,4 +183,94 @@ pub(crate) fn set_checked(toggle: &ToggleButton, on: bool) -> windows::core::Res
     let value = windows::Foundation::PropertyValue::CreateBoolean(on)?;
     let reference: windows::Foundation::IReference<bool> = value.cast()?;
     toggle.SetIsChecked(&reference)
+}
+
+#[cfg(test)]
+mod switch_tests {
+    use super::*;
+
+    #[test]
+    fn every_switch_action_carries_the_switch_state() {
+        let cases: &[Action] = &[
+            Action::HudToggled(true),
+            Action::EncryptToggled(true),
+            Action::LockOnExitToggled(true),
+            Action::HostToggle(true),
+            Action::AutoStartToggled(true),
+            Action::FileTransferToggled(true),
+            Action::AssistToggled(true),
+        ];
+        for kind in cases {
+            let on = Action::from_switch(kind, true).expect("开关类操作必须能派发");
+            let off = Action::from_switch(kind, false).expect("开关类操作必须能派发");
+            // 派发出的必须是同一种操作（不能再兜底成别的），且带上开关的实际状态
+            assert!(
+                matches!(
+                    (kind, &on),
+                    (Action::HudToggled(_), Action::HudToggled(true))
+                        | (Action::EncryptToggled(_), Action::EncryptToggled(true))
+                        | (
+                            Action::LockOnExitToggled(_),
+                            Action::LockOnExitToggled(true)
+                        )
+                        | (Action::HostToggle(_), Action::HostToggle(true))
+                        | (Action::AutoStartToggled(_), Action::AutoStartToggled(true))
+                        | (
+                            Action::FileTransferToggled(_),
+                            Action::FileTransferToggled(true)
+                        )
+                        | (Action::AssistToggled(_), Action::AssistToggled(true))
+                ),
+                "打开开关却派发出了别的操作 / 状态"
+            );
+            assert!(
+                matches!(
+                    (kind, &off),
+                    (Action::HudToggled(_), Action::HudToggled(false))
+                        | (Action::EncryptToggled(_), Action::EncryptToggled(false))
+                        | (
+                            Action::LockOnExitToggled(_),
+                            Action::LockOnExitToggled(false)
+                        )
+                        | (Action::HostToggle(_), Action::HostToggle(false))
+                        | (Action::AutoStartToggled(_), Action::AutoStartToggled(false))
+                        | (
+                            Action::FileTransferToggled(_),
+                            Action::FileTransferToggled(false)
+                        )
+                        | (Action::AssistToggled(_), Action::AssistToggled(false))
+                ),
+                "关闭开关却派发出了别的操作 / 状态"
+            );
+        }
+    }
+
+    #[test]
+    fn non_switch_actions_are_rejected_instead_of_retargeted() {
+        assert!(Action::from_switch(&Action::Login, true).is_none());
+        assert!(Action::from_switch(&Action::Logout, true).is_none());
+        assert!(Action::from_switch(&Action::RefreshDevices, true).is_none());
+        assert!(Action::from_switch(&Action::CopyId, true).is_none());
+    }
+
+    #[test]
+    fn only_instant_toggles_pass_the_busy_gate() {
+        for light in [
+            Action::HudToggled(true),
+            Action::EncryptToggled(false),
+            Action::LockOnExitToggled(true),
+            Action::AssistToggled(false),
+            Action::FileTransferToggled(true),
+        ] {
+            assert!(light.is_light_toggle());
+        }
+        for heavy in [
+            Action::HostToggle(true),
+            Action::AutoStartToggled(true),
+            Action::Login,
+            Action::RefreshDevices,
+        ] {
+            assert!(!heavy.is_light_toggle());
+        }
+    }
 }

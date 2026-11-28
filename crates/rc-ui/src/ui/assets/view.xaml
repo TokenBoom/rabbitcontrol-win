@@ -74,7 +74,11 @@
               <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE713;" FontSize="16" Foreground="{ThemeResource TextSecondaryBrush}"/>
               <TextBlock x:Name="StatusText" Text="信令未连接" Style="{StaticResource CaptionText}" VerticalAlignment="Center"/>
             </StackPanel>
-            <Button x:Name="LogoutButton" Content="退出" Style="{StaticResource LinkButton}" Grid.Column="1" VerticalAlignment="Center"/>
+            <!-- 登录成功后这里显示当前账号（登录浮层隐藏后，用户靠它知道现在是谁登录的） -->
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+              <TextBlock x:Name="AccountEmail" Style="{StaticResource CaptionText}" VerticalAlignment="Center" MaxWidth="260" TextTrimming="CharacterEllipsis"/>
+              <Button x:Name="LogoutButton" Content="退出" Style="{StaticResource LinkButton}"/>
+            </StackPanel>
           </Grid>
         </Border>
       </Grid>

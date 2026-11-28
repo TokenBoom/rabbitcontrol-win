@@ -33,7 +33,7 @@ use windows::UI::Xaml::Controls::SwapChainPanel;
 use windows::UI::Xaml::Input::PointerEventHandler;
 
 /// 全局禁用控件清单（busy 态）；缺失的条目自动跳过。
-const BUSY_CONTROLS: [&str; 11] = [
+const BUSY_CONTROLS: [&str; 13] = [
     "SignIn",
     "Email",
     "Password",
@@ -45,6 +45,10 @@ const BUSY_CONTROLS: [&str; 11] = [
     "LogoutButton",
     "ProbeServer",
     "NetworkOrigin",
+    // 这两个开关会发起耗时流程（启动被控服务 / 提权安装服务），忙碌期间必须禁用，
+    // 否则开关拨过去了操作却被拦下，显示的状态和实际对不上
+    "HostSwitch",
+    "AutoStartToggle",
 ];
 
 struct ActiveSession {
@@ -117,7 +121,33 @@ pub struct App {
     pressed_modifiers: u8,
 }
 
+/// 给 XAML 调用的错误补上「在哪个元素上做了什么」。
+///
+/// 这些接口的错误常常只有一句误导性的系统文案（例如把成功当成失败的
+/// 「操作成功完成。」）；没有上下文时，界面流程中断了也看不出断在哪里。
+pub(crate) trait WithContext<T> {
+    /// 失败时把 `what()` 拼在原始错误前面（保留原始错误码）。
+    fn ctx(self, what: impl FnOnce() -> String) -> Self;
+}
+
+impl<T> WithContext<T> for windows::core::Result<T> {
+    fn ctx(self, what: impl FnOnce() -> String) -> Self {
+        self.map_err(|err| {
+            let what = what();
+            // 错误码为 S_OK 的「假错误」带不上自定义说明（Display 只按错误码取系统文案），
+            // 所以这里另外写一行控制台日志，保证看得出是哪一步。
+            eprintln!(
+                "[ui] {what} 失败：{err}（code {:#010X}）",
+                err.code().0 as u32
+            );
+            windows::core::Error::new(err.code(), format!("{what}：{err}").into())
+        })
+    }
+}
+
 mod actions;
+#[cfg(test)]
+mod names_test;
 mod pages;
 
 pub(crate) use actions::{Action, Event, Events, Page};
@@ -634,22 +664,19 @@ impl App {
         let sender = self.sender();
         let toggle: ToggleSwitch = self.root.FindName(name)?.cast()?;
         let toggle_ref = toggle.clone();
-        // 预解析目标 Action 形态，闭包内仅注入当前布尔值。
-        let probe = match action {
-            Action::HudToggled(_) => 1,
-            Action::EncryptToggled(_) => 2,
-            Action::LockOnExitToggled(_) => 3,
-            _ => 0,
-        };
+        // `Toggled` 事件只带「开关现在开没开」，要按原操作的种类带上这个布尔值再派发。
+        // 不是开关类操作就在接线时报错——这里不允许兜底。
+        if Action::from_switch(&action, false).is_none() {
+            return Err(windows::core::Error::new(
+                windows::Win32::Foundation::E_INVALIDARG,
+                format!("switch_toggled({name})：传入的 Action 不是开关类操作").into(),
+            ));
+        }
         toggle.Toggled(RoutedEventHandler::new(move |_, _| {
             let on = toggle_ref.IsOn().unwrap_or(false);
-            let event_action = match probe {
-                1 => Action::HudToggled(on),
-                2 => Action::EncryptToggled(on),
-                3 => Action::LockOnExitToggled(on),
-                _ => Action::HudToggled(on),
-            };
-            sender.send(Event::Click(event_action));
+            if let Some(event_action) = Action::from_switch(&action, on) {
+                sender.send(Event::Click(event_action));
+            }
             Ok(())
         }))?;
         Ok(())
@@ -688,9 +715,14 @@ impl App {
                 return Ok(found);
             }
         }
-        // 未找到：走原路径返回原始错误（保持既有错误语义）
-        let element = self.root.FindName(name)?;
-        element.cast()
+        // 上面的 `find_in` 对「找不到」和「类型不符」都返回 None，这里重新取一次把两种情况分开
+        let element = self
+            .root
+            .FindName(name)
+            .ctx(|| format!("查找元素 {name}"))?;
+        element
+            .cast()
+            .ctx(|| format!("元素 {name} 存在，但不是代码期望的类型"))
     }
 
     fn find_in<T: Interface>(&self, root: &FrameworkElement, name: &str) -> Option<T> {
@@ -700,30 +732,39 @@ impl App {
     fn label(&self, name: &str, value: &str) -> Result<()> {
         let text: TextBlock = self.find(name)?;
         text.SetText(HSTRING::from(value))
+            .ctx(|| format!("设置文本 {name}"))
     }
 
     fn set_visible(&self, name: &str, visible: bool) -> Result<()> {
         let element: UIElement = self.find(name)?;
-        element.SetVisibility(if visible {
-            Visibility::Visible
-        } else {
-            Visibility::Collapsed
-        })
+        element
+            .SetVisibility(if visible {
+                Visibility::Visible
+            } else {
+                Visibility::Collapsed
+            })
+            .ctx(|| format!("设置 {name} {}", if visible { "可见" } else { "折叠" }))
     }
 
     fn set_busy(&mut self, busy: bool) -> Result<()> {
         self.busy = busy;
         for name in BUSY_CONTROLS {
             if let Some(control) = self.find_opt::<Control>(name) {
-                control.SetIsEnabled(!busy)?;
+                control
+                    .SetIsEnabled(!busy)
+                    .ctx(|| format!("设置 {name} {}", if busy { "禁用" } else { "启用" }))?;
             }
         }
         Ok(())
     }
 
     pub fn dispatch(&mut self) -> Result<()> {
-        if let Err(e) = self.dispatch_inner() {
-            eprintln!("[dispatch] non-fatal error (continuing): {}", e);
+        if let Err(err) = self.dispatch_inner() {
+            // 界面流程某一步失败不应拖垮整个消息循环；记下错误码，方便对照日志定位
+            eprintln!(
+                "[dispatch] non-fatal error (continuing): {err} (code {:#010X})",
+                err.code().0 as u32
+            );
         }
         Ok(())
     }
@@ -738,7 +779,9 @@ impl App {
         while let Ok(event) = self.inbox.try_recv() {
             eprintln!("[dispatch] processing event...");
             match event {
-                Event::Click(_) if self.busy => {}
+                // 轻量开关类操作在忙碌时也照常生效：它们的控件此刻并未禁用，拦下来只会让
+                // 开关显示的状态和实际对不上。耗时流程的控件已被禁用，不会走到这里。
+                Event::Click(action) if self.busy && !action.is_light_toggle() => {}
                 Event::Click(action) => self.on_click(action)?,
                 Event::RestoreFinished(result) => {
                     self.set_busy(false)?;
@@ -861,7 +904,7 @@ impl App {
                     self.set_busy(false)?;
                     match result {
                         Ok(running) => {
-                            let _ = self.set_checked_named("AutoStartToggle", running);
+                            self.set_switch_on("AutoStartToggle", running)?;
                             let caption = if running {
                                 "后台服务运行中（开机自动启动）"
                             } else {
@@ -870,7 +913,7 @@ impl App {
                             self.label("AutoStartCaption", caption)?;
                         }
                         Err(err) => {
-                            let _ = self.set_checked_named("AutoStartToggle", false);
+                            let _ = self.set_switch_on("AutoStartToggle", false);
                             self.label("AutoStartCaption", &format!("失败：{err}"))?;
                         }
                     }
@@ -885,7 +928,7 @@ impl App {
                         Err(err) => {
                             // 没起来就不能让开关显示为「开」：状态与落盘保持一致
                             persist_host_enabled(false);
-                            let _ = self.set_checked_named("HostSwitch", false);
+                            let _ = self.set_switch_on("HostSwitch", false);
                             self.label("HostError", &format!("启动失败：{err}"))?;
                         }
                     }

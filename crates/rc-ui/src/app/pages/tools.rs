@@ -37,9 +37,19 @@ impl App {
         Ok(())
     }
 
+    /// 设置复选类按钮（`ToggleButton`：工具 tab 等）的选中状态。
     pub(crate) fn set_checked_named(&self, name: &str, on: bool) -> Result<()> {
         let toggle: windows::UI::Xaml::Controls::Primitives::ToggleButton = self.find(name)?;
         super::super::set_checked(&toggle, on)
+    }
+
+    /// 设置拨动开关（`ToggleSwitch`：被控开关、自启开关等）的开 / 关。
+    ///
+    /// `ToggleSwitch` 不是 `ToggleButton`：对它用 [`Self::set_checked_named`] 会因为
+    /// 类型不符而落空——开关显示的状态就和实际对不上了。
+    pub(crate) fn set_switch_on(&self, name: &str, on: bool) -> Result<()> {
+        let switch: windows::UI::Xaml::Controls::ToggleSwitch = self.find(name)?;
+        switch.SetIsOn(on)
     }
 
     /// 打开新终端（attach）。

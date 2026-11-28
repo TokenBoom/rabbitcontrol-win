@@ -1,6 +1,6 @@
 //! 登录 / 恢复 / 登出 / 服务器设置。
 
-use super::{super::actions::*, super::App};
+use super::super::{actions::*, App, WithContext};
 use windows::core::Result;
 
 use std::thread;
@@ -8,9 +8,12 @@ use std::thread;
 use crate::biz::auth::AccountSession;
 use rc_client_core::server_config;
 use rc_client_core::server_config::ServerStatusSnapshot;
-use windows::core::Interface;
-use windows::UI::Xaml::Controls::{PasswordBox, TextBox};
-use windows::UI::Xaml::Shapes::Ellipse;
+use windows::UI::Xaml::Controls::{PasswordBox, TextBlock, TextBox};
+
+/// 给界面操作的错误补上「是哪一步」（见 [`WithContext`]）。
+pub(crate) fn ctx<T>(what: &str, result: windows::core::Result<T>) -> windows::core::Result<T> {
+    result.ctx(|| what.to_string())
+}
 
 use crate::biz::{auth, settings};
 
@@ -71,37 +74,46 @@ impl App {
         let _ = self.set_visible("TitleLogo", true);
         let _ = self.set_visible("Minimize", true);
         let _ = self.set_visible("CloseWindow", true);
-        self.find::<PasswordBox>("Password")?.SetPassword("")?;
-        self.label("LoginError", "")?;
-        self.label("AccountEmail", &account.email)?;
+        ctx(
+            "清空密码框",
+            self.find::<PasswordBox>("Password")?.SetPassword(""),
+        )?;
+        ctx("清空登录提示", self.label("LoginError", ""))?;
+        ctx("显示账号", self.label("AccountEmail", &account.email))?;
         // 用登录响应携带的数据即时渲染首屏，REST 全量随后补齐。
         self.devices = account.devices.clone();
         if let Some(id) = account.device_id.clone() {
-            self.label("LocalIdText", &server_config::format_device_id(&id))?;
+            ctx(
+                "显示本机设备码",
+                self.label("LocalIdText", &server_config::format_device_id(&id)),
+            )?;
         }
         self.logged_in = true;
-        self.set_visible("LoginOverlay", false)?;
-        self.set_visible("MainShell", true)?;
-        self.apply_scale()?;
-        self.load_prefs_into_ui()?;
+        ctx("隐藏登录浮层", self.set_visible("LoginOverlay", false))?;
+        ctx("显示主界面", self.set_visible("MainShell", true))?;
+        ctx("记录 DPI", self.apply_scale())?;
+        ctx("载入设置", self.load_prefs_into_ui())?;
         if let Err(err) = self.runtime.sync() {
-            self.label("AssistError", &format!("信令启动失败：{err}"))?;
+            ctx(
+                "信令启动失败提示",
+                self.label("AssistError", &format!("信令启动失败：{err}")),
+            )?;
         }
-        self.render_devices()?;
-        self.render_history()?;
+        ctx("渲染设备列表", self.render_devices())?;
+        ctx("渲染历史记录", self.render_history())?;
         self.page = Page::Devices;
-        self.show_page(Page::Devices)?;
-        self.on_click(Action::RefreshDevices)?;
+        ctx("切换到设备页", self.show_page(Page::Devices))?;
+        ctx("刷新设备", self.on_click(Action::RefreshDevices))?;
         let events = self.sender();
         self.auth.start_maintainer(move |reason| {
-            let _ = reason;
-            // 强制重登：后台维护线程回调，直接停运行时并回登录页。
-            events.send(Event::LogoutFinished(Err(String::new())));
+            // 强制重登：后台维护线程回调，停运行时并回登录页——原因必须告诉用户。
+            eprintln!("[auth] 需要重新登录：{reason}");
+            events.send(Event::LogoutFinished(Err(format!("登录已失效：{reason}"))));
         });
         // 「允许被控」此前开着：后台进程已让位，由主界面把被控服务续上
         if rc_appcore::agent_state::AgentState::load().host_enabled {
-            let _ = self.set_checked_named("HostSwitch", true);
-            self.on_host_toggle(true)?;
+            let _ = self.set_switch_on("HostSwitch", true);
+            ctx("续上被控服务", self.on_host_toggle(true))?;
         }
         Ok(())
     }
@@ -165,7 +177,7 @@ impl App {
             return Ok(());
         }
         let online = snapshot.error_message.is_none() && snapshot.device_id.is_some();
-        let dot: Ellipse = self.find("StatusDot")?;
+        // 状态靠文字颜色区分（在线 = 品牌绿）；标题栏里没有单独的状态圆点
         let color = if online {
             windows::UI::Color {
                 A: 255,
@@ -176,15 +188,17 @@ impl App {
         } else {
             windows::UI::Color {
                 A: 255,
-                R: 0xB9,
-                G: 0xC4,
-                B: 0xD4,
+                R: 0x51,
+                G: 0x62,
+                B: 0x78,
             }
         };
         let brush = windows::UI::Xaml::Media::SolidColorBrush::new()?;
         brush.SetColor(color)?;
-        let shape: windows::UI::Xaml::Shapes::Shape = dot.cast()?;
-        shape.SetFill(&brush)?;
+        let status: TextBlock = self.find("StatusText")?;
+        status
+            .SetForeground(&brush)
+            .ctx(|| "设置状态文字颜色".to_string())?;
         let state_text = match snapshot.error_message.as_deref() {
             Some(message) => format!("信令：{message}"),
             None if online => "信令在线".to_string(),
