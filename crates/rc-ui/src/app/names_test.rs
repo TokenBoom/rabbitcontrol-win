@@ -41,7 +41,7 @@ const INTERACTIVE_TAGS: &[&str] = &[
     "PasswordBox",
 ];
 
-fn collect_rust_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+pub(super) fn collect_rust_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -50,8 +50,10 @@ fn collect_rust_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
         if path.is_dir() {
             collect_rust_files(&path, out);
         } else if path.extension().is_some_and(|ext| ext == "rs")
-            // 本文件里的字符串字面量是扫描器的样本，不是真实的界面查找
-            && path.file_name().is_some_and(|name| name != "names_test.rs")
+            // 静态核对测试自己的字符串字面量是样本，不是真实的界面查找
+            && path
+                .file_name()
+                .is_some_and(|name| !name.to_string_lossy().ends_with("_test.rs"))
         {
             out.push(path);
         }
@@ -70,12 +72,12 @@ fn xaml_names(text: &str) -> Vec<&str> {
     names
 }
 
-fn line_of(text: &str, pos: usize) -> usize {
+pub(super) fn line_of(text: &str, pos: usize) -> usize {
     text[..pos].bytes().filter(|b| *b == b'\n').count() + 1
 }
 
 /// 去掉整行注释，避免把注释里的示例当成真实查找。
-fn strip_comment_lines(source: &str) -> String {
+pub(super) fn strip_comment_lines(source: &str) -> String {
     source
         .lines()
         .map(|line| {

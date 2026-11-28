@@ -149,6 +149,8 @@ mod actions;
 #[cfg(test)]
 mod names_test;
 mod pages;
+#[cfg(test)]
+mod types_test;
 
 pub(crate) use actions::{Action, Event, Events, Page};
 use actions::{SessionKeyEvent, SessionPointerEvent};
