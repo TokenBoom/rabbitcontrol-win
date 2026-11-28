@@ -442,13 +442,16 @@ fn balloon(title: &str, text: &str) {
 }
 
 fn on_tray_menu(state: &UiState, hwnd: HWND, at: (i32, i32)) {
-    let (_, snapshot) = state.queue.menu_state();
+    let (view, snapshot) = state.queue.menu_state();
     let command = tray::show_menu(
         hwnd,
         at,
-        MenuState {
+        &MenuState {
             host_enabled: snapshot.host_enabled,
             session_active: snapshot.session_active,
+            device_code: snapshot.device_id.clone(),
+            temp_code: snapshot.temp_code.clone(),
+            status: tray::status_text(view, snapshot.connected_peer.as_deref()),
         },
     );
     let Some(command) = command else {
@@ -458,6 +461,22 @@ fn on_tray_menu(state: &UiState, hwnd: HWND, at: (i32, i32)) {
         TrayCommand::OpenGui => {
             let _ = (state.open_gui)();
         }
+        TrayCommand::CopyDeviceCode => {
+            copy_and_notify("设备码", snapshot.device_id.as_deref().unwrap_or_default());
+        }
+        TrayCommand::CopyTempCode => {
+            copy_and_notify(
+                "临时验证码",
+                snapshot.temp_code.as_deref().unwrap_or_default(),
+            );
+        }
+        TrayCommand::CopyShareText => copy_and_notify(
+            "设备 ID 与验证码",
+            &tray::share_text(
+                snapshot.device_id.as_deref().unwrap_or_default(),
+                snapshot.temp_code.as_deref().unwrap_or_default(),
+            ),
+        ),
         TrayCommand::ToggleHost => {
             let _ = state
                 .commands
@@ -469,5 +488,17 @@ fn on_tray_menu(state: &UiState, hwnd: HWND, at: (i32, i32)) {
         TrayCommand::Quit => {
             let _ = state.commands.send(Command::Quit);
         }
+    }
+}
+
+/// 把文本放进剪贴板，并用托盘气泡告知结果（菜单已经关了，这是唯一的反馈渠道）。
+fn copy_and_notify(what: &str, text: &str) {
+    let copied = rc_clipboard_win::WinClipboard::new().and_then(|mut clipboard| {
+        use rc_session::ClipboardBackend;
+        clipboard.write_text(text)
+    });
+    match copied {
+        Ok(()) => balloon("RabbitControl", &format!("已复制{what}")),
+        Err(err) => balloon("RabbitControl", &format!("复制{what}失败：{err}")),
     }
 }

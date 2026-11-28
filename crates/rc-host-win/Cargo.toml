@@ -21,6 +21,7 @@ rc-platform-win = { path = "../rc-platform-win" }
 rc-client-core.workspace = true
 rc-session.workspace = true
 rc-win32core = { path = "../rc-win32core" }
+rc-clipboard-win = { path = "../rc-clipboard-win" }
 serde_json.workspace = true
 windows = { version = "0.58", features = [
     "Win32_Foundation",

@@ -19,6 +19,7 @@ use rc_appcore::agent_ipc::{AgentSnapshot, PendingApproval};
 use rc_appcore::agent_state::AgentState;
 use rc_appcore::auth_text::format_auth_error;
 use rc_appcore::host::{bridge_relay_incoming, HostRuntime};
+use rc_appcore::p2p_port_lease::P2pPortLeases;
 use rc_appcore::signal_runtime::SignalRuntime;
 use rc_client_core::app_prefs::{self, AppPrefs};
 use rc_client_core::auth_client::{self, AuthMaintainerHandle, AuthSessionManager};
@@ -173,6 +174,8 @@ pub struct Engine {
     last_error: Option<String>,
     /// 被控服务意外停止后的重启时刻。
     host_restart_at: Option<Instant>,
+    /// 主界面经管道申请的 P2P UDP 端口租约（本进程持有探测端口、对方的打洞要用时）。
+    p2p_port_leases: P2pPortLeases,
 }
 
 impl Engine {
@@ -240,6 +243,7 @@ impl Engine {
             pending_approval: None,
             last_error: None,
             host_restart_at: None,
+            p2p_port_leases: P2pPortLeases::default(),
         })
     }
 
@@ -339,6 +343,10 @@ impl Engine {
     /// 周期驱动（引擎线程每 ~100ms 调一次）：轮询信令与被控事件、处理状态迁移。
     pub fn tick(&mut self) -> Vec<EngineEvent> {
         let mut events = Vec::new();
+        // 过期的跨进程端口租约：归还探测端口
+        for (id, port) in self.p2p_port_leases.prune_expired() {
+            diag_log!("跨进程 P2P UDP 端口租约已过期释放：lease_id={id}，端口 {port}");
+        }
         // 先在不借用 `self.state` 的上下文里做出决定，再执行（避免跨调用的可变借用）
         let mut become_active = Tick::Nothing;
         match &mut self.state {
@@ -561,6 +569,23 @@ impl Engine {
         };
     }
 
+    /// 签发一条跨进程 P2P UDP 端口租约（主界面的打洞要用本进程持有的探测端口时经管道申请）。
+    pub fn acquire_p2p_port_lease(&mut self, port: u16, lease_ttl_ms: u64) -> Result<u64, String> {
+        let lease_id = self.p2p_port_leases.acquire(port, lease_ttl_ms)?;
+        diag_log!("跨进程 P2P UDP 端口租约已签发：lease_id={lease_id}，端口 {port}");
+        Ok(lease_id)
+    }
+
+    /// 续租（主界面每 10 秒一次；续不上时它放弃租约，到期后这里恢复探测）。
+    pub fn renew_p2p_port_lease(&mut self, lease_id: u64, lease_ttl_ms: u64) -> Result<(), String> {
+        self.p2p_port_leases.renew(lease_id, lease_ttl_ms)
+    }
+
+    /// 归还租约：立即恢复该端口的探测。
+    pub fn release_p2p_port_lease(&mut self, lease_id: u64) {
+        self.p2p_port_leases.release(lease_id);
+    }
+
     /// 托盘展示状态。
     pub fn tray_view(&self) -> TrayView {
         match &self.state {
@@ -645,6 +670,8 @@ impl Engine {
         if let Some(mut handle) = self.maintainer.take() {
             handle.stop();
         }
+        // 探测套接字随信令一起没了：跨进程端口租约无从谈起
+        self.p2p_port_leases.clear();
         self.signal_online = false;
         self.device_id = None;
         self.temp_code = None;

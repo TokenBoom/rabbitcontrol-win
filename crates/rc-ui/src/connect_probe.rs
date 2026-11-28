@@ -126,6 +126,7 @@ fn wait_signal_online(runtime: &SignalRuntime) -> Result<(), String> {
 
 fn probe(code: &str, seconds: u64, args: &[String]) -> Result<String, String> {
     rc_platform_win::register_all();
+    rc_appcore::p2p_port_lease::register_hook();
     let auth_runtime = auth::AuthRuntime::new()?;
     let account = sign_in(&auth_runtime.manager(), &auth_runtime.server_path(), args)?;
 

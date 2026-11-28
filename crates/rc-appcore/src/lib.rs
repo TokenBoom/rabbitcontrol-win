@@ -22,5 +22,6 @@ pub mod auth_text;
 pub mod daemon_ipc;
 pub mod host;
 pub mod named_pipe;
+pub mod p2p_port_lease;
 pub mod signal_runtime;
 pub mod trace_log;

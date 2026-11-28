@@ -1004,6 +1004,7 @@ dependencies = [
  "embed-resource",
  "rc-appcore",
  "rc-client-core",
+ "rc-clipboard-win",
  "rc-platform-win",
  "rc-session",
  "rc-win32core",

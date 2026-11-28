@@ -56,6 +56,26 @@ pub enum Request {
     OpenGui,
     /// 整体退出后台进程（并请求守护服务暂不再拉起）。
     Quit,
+    /// 请对端临时让出某个 UDP 探测端口（P2P 打洞要独占同一个本地端口），返回租约号
+    /// `lease_id`。对端没持有该端口的探测槽位时失败。见 [`crate::p2p_port_lease`]。
+    AcquireP2pUdpPort {
+        /// 本地 UDP 端口。
+        port: u16,
+        /// 租约时长（毫秒，0 = 默认 30 秒；夹到 5–60 秒）。
+        lease_ttl_ms: u64,
+    },
+    /// 续租：租约到期后对端会恢复该端口的探测。
+    RenewP2pUdpPort {
+        /// 租约号。
+        lease_id: u64,
+        /// 新的租约时长（毫秒）。
+        lease_ttl_ms: u64,
+    },
+    /// 归还租约：对端立即恢复该端口的探测。
+    ReleaseP2pUdpPort {
+        /// 租约号。
+        lease_id: u64,
+    },
 }
 
 /// 后台被控进程的状态快照。
@@ -189,6 +209,24 @@ mod tests {
             (Request::DisconnectClient, r#"{"op":"disconnect-client"}"#),
             (Request::OpenGui, r#"{"op":"open-gui"}"#),
             (Request::Quit, r#"{"op":"quit"}"#),
+            (
+                Request::AcquireP2pUdpPort {
+                    port: 44350,
+                    lease_ttl_ms: 30_000,
+                },
+                r#"{"op":"acquire-p2p-udp-port","port":44350,"lease_ttl_ms":30000}"#,
+            ),
+            (
+                Request::RenewP2pUdpPort {
+                    lease_id: 7,
+                    lease_ttl_ms: 30_000,
+                },
+                r#"{"op":"renew-p2p-udp-port","lease_id":7,"lease_ttl_ms":30000}"#,
+            ),
+            (
+                Request::ReleaseP2pUdpPort { lease_id: 7 },
+                r#"{"op":"release-p2p-udp-port","lease_id":7}"#,
+            ),
         ];
         for (request, wire) in cases {
             assert_eq!(serde_json::to_string(&request).unwrap(), wire);

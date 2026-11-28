@@ -90,6 +90,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         handshake_with_agent();
     }
     rc_platform_win::register_all();
+    // P2P 打洞要用信令注册时的本地 UDP 端口；探测套接字在后台进程手里时经管道向它租用
+    rc_appcore::p2p_port_lease::register_hook();
     let shell = ui::shell::Shell::new()?;
     let mut app = app::App::new(&shell)?;
     let _ = shell.show_and_run(|| app.dispatch());

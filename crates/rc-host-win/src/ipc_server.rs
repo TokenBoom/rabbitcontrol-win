@@ -132,6 +132,25 @@ fn handle(
             (hooks.quit)();
             Response::ok(serde_json::Value::Null)
         }
+        // 跨进程 P2P UDP 端口租约（见 rc_appcore::p2p_port_lease）：本进程持有探测端口，
+        // 主界面的打洞要用时临时让出
+        Request::AcquireP2pUdpPort { port, lease_ttl_ms } => {
+            match engine.acquire_p2p_port_lease(port, lease_ttl_ms) {
+                Ok(lease_id) => Response::ok(json!({ "lease_id": lease_id })),
+                Err(err) => Response::err(err),
+            }
+        }
+        Request::RenewP2pUdpPort {
+            lease_id,
+            lease_ttl_ms,
+        } => match engine.renew_p2p_port_lease(lease_id, lease_ttl_ms) {
+            Ok(()) => Response::ok(serde_json::Value::Null),
+            Err(err) => Response::err(err),
+        },
+        Request::ReleaseP2pUdpPort { lease_id } => {
+            engine.release_p2p_port_lease(lease_id);
+            Response::ok(serde_json::Value::Null)
+        }
     }
 }
 
@@ -277,6 +296,35 @@ mod tests {
         let response: Response = serde_json::from_str(&raw).unwrap();
         assert!(!response.ok);
         assert!(response.error.unwrap().contains("无法识别"));
+    }
+
+    #[test]
+    fn udp_port_lease_is_refused_when_the_port_is_not_held() {
+        // 未登录的引擎没有信令、也就没有探测套接字：任何端口都租不出来，但协议走得通
+        let server = TestServer::start("lease");
+        let response = agent_ipc::call_pipe(
+            &server.pipe,
+            &Request::AcquireP2pUdpPort {
+                port: 44350,
+                lease_ttl_ms: 30_000,
+            },
+            5_000,
+        )
+        .expect("管道调用应成功");
+        assert!(!response.ok);
+        assert_eq!(
+            response.error.as_deref(),
+            Some("后台进程当前未持有 UDP 端口 44350 的探测槽位")
+        );
+        let renewed = call(
+            &server.pipe,
+            &Request::RenewP2pUdpPort {
+                lease_id: 1,
+                lease_ttl_ms: 30_000,
+            },
+        );
+        assert!(!renewed.ok);
+        assert!(call(&server.pipe, &Request::ReleaseP2pUdpPort { lease_id: 1 }).ok);
     }
 
     #[test]
