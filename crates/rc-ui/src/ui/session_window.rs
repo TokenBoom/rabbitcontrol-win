@@ -130,6 +130,17 @@ impl SessionWindow {
         self.hwnd
     }
 
+    /// 客户区宽度（逻辑像素，即 XAML 的单位）。
+    pub fn client_width(&self) -> f64 {
+        unsafe {
+            let mut rect = RECT::default();
+            if !GetClientRect(self.hwnd, &mut rect).as_bool() {
+                return 1024.0;
+            }
+            f64::from(rect.right - rect.left) * 96.0 / f64::from(GetDpiForWindow(self.hwnd).max(96))
+        }
+    }
+
     /// 设置标题（对端设备名）。
     pub fn set_title(&self, title: &str) {
         unsafe {
@@ -218,7 +229,7 @@ unsafe fn fit_island(parent: HWND, island: HWND) {
             0,
             rect.right,
             rect.bottom,
-            SWP_NOACTIVATE | SWP_NOZORDER,
+            SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW,
         );
     }
 }
