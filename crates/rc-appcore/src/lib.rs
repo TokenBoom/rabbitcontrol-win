@@ -7,6 +7,7 @@
 //!   只能有一条信令连接——服务端会以新连接顶掉旧连接）；
 //! - [`host`]：被控服务（[`rc_client_core::host_bridge::HostHandle`]）编排；
 //! - [`agent_state`]：后台被控进程的持久化开关；
+//! - [`client_lock`]：客户端安全锁定的配置与密钥校验（锁定期间不能改设置、不能退出）；
 //! - [`agent_ipc`]：主界面 ↔ 后台被控进程的命名管道协议；
 //! - [`named_pipe`]：命名管道服务端的通用骨架（守护服务与后台进程共用）；
 //! - [`trace_log`]：内部事件日志开关（环境变量 `RC_TRACE`，诊断用）。
@@ -20,6 +21,7 @@
 pub mod agent_ipc;
 pub mod agent_state;
 pub mod auth_text;
+pub mod client_lock;
 pub mod daemon_ipc;
 pub mod host;
 pub mod named_pipe;

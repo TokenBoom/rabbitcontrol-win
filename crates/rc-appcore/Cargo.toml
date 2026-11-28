@@ -12,6 +12,11 @@ rc-client-core.workspace = true
 rc-session.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# 客户端安全锁定的密钥校验：PBKDF2-HMAC-SHA256 + 随机盐
+sha2 = "0.10"
+hmac = "0.12"
+pbkdf2 = "0.12"
+getrandom = "0.2"
 tracing-subscriber = { version = "0.3", default-features = false, features = [
     "env-filter",
     "fmt",
