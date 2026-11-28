@@ -9,9 +9,18 @@ use rc_client_core::platform::PreallocatedRenderSurface;
 use rc_client_core::session_bridge::SessionHandle;
 use rc_input::InputEvent;
 use windows::core::Interface;
+use windows::core::HSTRING;
 use windows::System::VirtualKey;
-use windows::UI::Xaml::Controls::{PasswordBox, SwapChainPanel};
+use windows::UI::Xaml::Controls::Control;
+use windows::UI::Xaml::Controls::{
+    FontIcon, IconElement, MenuFlyout, MenuFlyoutItem, MenuFlyoutItemBase, MenuFlyoutSubItem,
+    PasswordBox, SwapChainPanel,
+};
+use windows::UI::Xaml::Media::Animation::Storyboard;
+use windows::UI::Xaml::RoutedEventHandler;
 use windows::UI::Xaml::{Controls::TextBlock, FrameworkElement, UIElement};
+
+use rc_client_core::session_bridge::SessionCommand;
 
 use crate::biz::session as sess;
 use crate::biz::session::SessionView;
@@ -282,36 +291,36 @@ impl App {
 
     pub(crate) fn apply_session_view(&mut self) {
         let view = self.session_view.clone();
+        let target = self
+            .session
+            .as_ref()
+            .map(|s| s.target_name.clone())
+            .unwrap_or_default();
         match &view {
             SessionView::Idle => {}
             SessionView::Connecting(text) => {
                 let _ = self.label("SessionStatus", text);
+                let _ = self.session_dot(PENDING_DOT);
+                let _ = self.set_visible("SessionBackendChip", false);
                 self.set_session_overlay(text, true);
             }
             SessionView::Negotiated {
                 width,
                 height,
                 fps,
-                backend,
                 transport,
                 mtls_active: _,
                 watch_only,
+                ..
             } => {
-                let mode = if *watch_only { " · 观看" } else { "" };
-                let status = format!(
-                    "{target} · {w}×{h}@{fps}{mode}",
-                    target = self
-                        .session
-                        .as_ref()
-                        .map(|s| s.target_name.as_str())
-                        .unwrap_or(""),
-                    w = width,
-                    h = height,
-                    fps = fps,
+                // 状态条：左边只放设备名，细节收进旁边的小标签
+                let _ = self.label("SessionStatus", &target);
+                let _ = self.label(
+                    "SessionBackend",
+                    &sess::session_summary(*width, *height, *fps, transport, *watch_only),
                 );
-                let _ = self.label("SessionStatus", &status);
-                let badge = format!("{backend} · {transport}",);
-                let _ = self.label("SessionBackend", &badge);
+                let _ = self.set_visible("SessionBackendChip", true);
+                let _ = self.session_dot(ONLINE_DOT);
                 match self.host_screen_hint {
                     Some(hint) => self.set_session_overlay(hint, false),
                     None => self.set_session_overlay("", false),
@@ -319,8 +328,10 @@ impl App {
                 self.apply_hud();
             }
             SessionView::Ended(reason) => {
-                let _ = self.label("SessionStatus", &format!("已结束：{reason}"));
-                self.set_session_overlay(&format!("会话已结束：{reason}"), false);
+                let _ = self.label("SessionStatus", &format!("{target} · 已断开"));
+                let _ = self.session_dot(ENDED_DOT);
+                let _ = self.set_visible("SessionBackendChip", false);
+                self.set_session_overlay(&format!("连接已断开：{reason}"), false);
                 let _ = self.set_visible("SessionReconnect", true);
                 let _ = self.set_visible("SessionHudPanel", false);
             }
@@ -342,285 +353,237 @@ impl App {
         let _ = self.set_visible("SessionHudPanel", true);
     }
 
-    /// 画质工具条：按被控端 DisplayConfig 重建候选并回填选中态。
-    ///
-    /// 候选列表仅在被控端能力（预设/编解码/最高帧率）变化时重建；
-    /// 选中态每次 DisplayConfig 到达都对齐（热切换后被控端回传权威值）。
-    pub(crate) fn sync_quality_bar(&mut self) -> Result<()> {
-        use windows::UI::Xaml::Controls::ComboBox;
+    /// 「显示与画质」菜单：候选只在被控端能力（预设 / 编解码 / 最高帧率）变化时重建；
+    /// 当前生效项每次都对齐（热切换后被控端回传权威值）。
+    pub(crate) fn sync_quality_menu(&mut self) -> Result<()> {
+        let bitrate_preset = self.prefs.lock().unwrap().bitrate_preset.clone();
+        let groups =
+            sess::setting_groups(&self.quality, &self.quality_fps_options, &bitrate_preset);
+        let signature: String = groups
+            .iter()
+            .map(|group| format!("{:?}|{:?}|{}", group.setting, group.options, group.enabled))
+            .collect();
+        if signature != self.quality_sig {
+            self.quality_sig = signature;
+            self.rebuild_quality_menu(&groups)?;
+        }
+        self.quality_menu = groups;
+        self.mark_quality_selection()?;
+        // 没谈下来之前没有可调的东西（演示窗口例外：值是摆的，菜单要能点）
+        if let Some(button) = self.find_opt::<Control>("SessionQuality") {
+            button.SetIsEnabled(self.quality_menu_interactive())?;
+        }
+        Ok(())
+    }
 
-        let sig = format!(
-            "{:x}|{:?}|{}|{:?}",
-            {
-                // 稳定签名：预设列表 + 编解码支持 + 最高帧率
-                let mut acc: u64 = 14695981039346656037;
-                for (w, h, l) in &self.quality.presets {
-                    for byte in format!("{w}x{h}{l}").bytes() {
-                        acc ^= byte as u64;
-                        acc = acc.wrapping_mul(1099511628211);
+    /// 画质菜单此刻能不能操作：谈成了，或者正在演示。
+    fn quality_menu_interactive(&self) -> bool {
+        if matches!(self.session_view, SessionView::Negotiated { .. }) {
+            return true;
+        }
+        #[cfg(debug_assertions)]
+        if self.in_terminal_demo() {
+            return true;
+        }
+        false
+    }
+
+    /// 终端演示窗口（仅调试构建有）：没有会话，也没有真实被控端。
+    #[cfg(debug_assertions)]
+    pub(super) fn in_terminal_demo(&self) -> bool {
+        self.terminal_demo.is_some()
+    }
+
+    /// 按选项组重建菜单：每组一个带图标的子菜单，选项点了发 `StreamSettingPicked`。
+    /// 菜单项元素留着：之后只改它们前面的勾，不重建。
+    fn rebuild_quality_menu(&mut self, groups: &[sess::SettingGroup]) -> Result<()> {
+        let Some(flyout) = self.find_opt::<MenuFlyout>("QualityMenu") else {
+            return Ok(());
+        };
+        let items = flyout.Items()?;
+        items.Clear()?;
+        self.quality_items.clear();
+        for group in groups {
+            // 只有一块显示器（或对端没报）：不摆「显示器」这一项
+            if group.setting == StreamSetting::Display && group.options.len() < 2 {
+                continue;
+            }
+            let submenu = MenuFlyoutSubItem::new()?;
+            // 0.37 投影不把 Text / Icon / Items 挂到基类上：设置用具体类型，入列表时再转基类
+            submenu.SetText(HSTRING::from(group.setting.title()))?;
+            submenu.SetIcon(&menu_icon(group.setting.icon(), 14.0)?)?;
+            submenu.cast::<Control>()?.SetIsEnabled(group.enabled)?;
+            let mut row = Vec::new();
+            for (index, option) in group.options.iter().enumerate() {
+                let item = MenuFlyoutItem::new()?;
+                item.SetText(HSTRING::from(option.as_str()))?;
+                let sender = self.sender();
+                let setting = group.setting;
+                item.Click(RoutedEventHandler::new(move |_, _| {
+                    sender.send(Event::Click(Action::StreamSettingPicked(setting, index)));
+                    Ok(())
+                }))?;
+                submenu
+                    .Items()?
+                    .Append(&item.clone().cast::<MenuFlyoutItemBase>()?)?;
+                row.push(item);
+            }
+            items.Append(&submenu.cast::<MenuFlyoutItemBase>()?)?;
+            self.quality_items.push(row);
+        }
+        Ok(())
+    }
+
+    /// 给当前生效项打勾（其它项留一个空图标占位，文案才对齐）。
+    fn mark_quality_selection(&self) -> Result<()> {
+        for (group, row) in self.quality_menu.iter().zip(&self.quality_items) {
+            for (index, item) in row.iter().enumerate() {
+                item.SetIcon(&menu_icon(
+                    if index == group.selected {
+                        "\u{E73E}"
+                    } else {
+                        " "
+                    },
+                    12.0,
+                )?)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// 菜单里选了一项：预钳制后下发（与当前生效值一致时跳过，避免空切换）。
+    pub(crate) fn on_stream_setting_picked(
+        &mut self,
+        setting: StreamSetting,
+        index: usize,
+    ) -> Result<()> {
+        if !self.quality_menu_interactive() {
+            return Ok(());
+        }
+        // 演示窗口：没有会话可下发，只挪菜单里的勾，也不动真实的偏好
+        #[cfg(debug_assertions)]
+        let demo = self.in_terminal_demo();
+        #[cfg(not(debug_assertions))]
+        let demo = false;
+        let group = |setting| {
+            self.quality_menu
+                .iter()
+                .find(|group| group.setting == setting)
+        };
+        let selected = |setting| group(setting).map_or(0, |group| group.selected);
+        if let Some(active) = self.session.as_ref().filter(|_| !demo) {
+            let handle = &active.handle;
+            match setting {
+                StreamSetting::Resolution | StreamSetting::Fps => {
+                    let (resolution, fps) = if setting == StreamSetting::Resolution {
+                        (index, selected(StreamSetting::Fps))
+                    } else {
+                        (selected(StreamSetting::Resolution), index)
+                    };
+                    let (width, height, fps) = sess::stream_request(
+                        resolution,
+                        fps,
+                        &self.quality,
+                        &self.quality_fps_options,
+                    );
+                    if sess::stream_request_unchanged((width, height, fps), &self.quality) {
+                        return Ok(());
+                    }
+                    // 预钳制（ios 踩坑：越界静默无流，绝不直接透传）
+                    let Some((width, height, fps)) =
+                        sess::clamp_stream_request(width, height, fps, &self.quality)
+                    else {
+                        return Ok(());
+                    };
+                    handle.send(SessionCommand::SetStreamParams { width, height, fps });
+                }
+                // 码率：自适应（0）不下发
+                StreamSetting::Bitrate => {
+                    let Some(bps) = sess::BITRATE_STEPS_BPS.get(index).copied() else {
+                        return Ok(());
+                    };
+                    if bps != 0 {
+                        handle.send(SessionCommand::SetBitrate { bps });
                     }
                 }
-                acc
-            },
-            self.quality.supported_codecs,
-            self.quality.max_fps,
-            self.quality.client_supports_hevc
-        );
-        if sig != self.quality_sig {
-            self.quality_sig = sig;
-            // 分辨率：跟随当前 + 预设
-            let mut res_labels = vec!["跟随当前".to_string()];
-            res_labels.extend(self.quality.presets.iter().map(|(_, _, l)| l.clone()));
-            self.reset_combo_items("StreamResolutionBox", &res_labels)?;
-            // 帧率：跟随当前 + 候选
-            let mut fps_labels = vec!["跟随当前".to_string()];
-            fps_labels.extend(self.quality_fps_options.iter().map(|v| format!("{v} fps")));
-            self.reset_combo_items("StreamFpsBox", &fps_labels)?;
-            // 码率：与设置页同源
-            self.reset_combo_items(
-                "StreamBitrateBox",
-                &[
-                    "自适应".to_string(),
-                    "8 Mbps".to_string(),
-                    "14 Mbps".to_string(),
-                    "30 Mbps".to_string(),
-                ],
-            )?;
-            // 编解码：被控端支持列表；未上报 → 单项"自动"禁用
-            let codec_labels: Vec<String> = if self.quality.supported_codecs.is_empty() {
-                vec!["自动".to_string()]
-            } else {
-                let mut v = vec!["跟随当前".to_string()];
-                v.extend(
-                    self.quality
+                // 编解码：跟随当前（0）不下发
+                StreamSetting::Codec => {
+                    if let Some(codec) = self
+                        .quality
                         .supported_codecs
-                        .iter()
-                        .map(|c| match c.as_str() {
-                            "hevc" => "HEVC".to_string(),
-                            "h264" => "H.264".to_string(),
-                            other => other.to_uppercase(),
-                        }),
-                );
-                v
-            };
-            self.reset_combo_items("StreamCodecBox", &codec_labels)?;
-            if let Some(box_) = self.find_opt::<ComboBox>("StreamCodecBox") {
-                let _ = box_
-                    .cast::<windows::UI::Xaml::Controls::Control>()?
-                    .SetIsEnabled(!self.quality.supported_codecs.is_empty());
-            }
-        }
-
-        // 回填选中态（对齐被控端权威值）
-        let res_index = self
-            .quality
-            .presets
-            .iter()
-            .position(|(w, h, _)| *w == self.quality.width && *h == self.quality.height)
-            .map(|i| i as i32 + 1)
-            .unwrap_or(0);
-        let fps_index = self
-            .quality_fps_options
-            .iter()
-            .position(|v| *v == self.quality.fps)
-            .map(|i| i as i32 + 1)
-            .unwrap_or(0);
-        let bitrate_preset = self.prefs.lock().unwrap().bitrate_preset.clone();
-        let bitrate_index = match bitrate_preset.as_str() {
-            "8m" => 1,
-            "14m" => 2,
-            "30m" => 3,
-            _ => 0,
-        };
-        let codec_index = self
-            .quality
-            .codec
-            .as_deref()
-            .and_then(|c| self.quality.supported_codecs.iter().position(|s| s == c))
-            .map(|i| i as i32 + 1)
-            .unwrap_or(0);
-        for (name, index) in [
-            ("StreamResolutionBox", res_index),
-            ("StreamFpsBox", fps_index),
-            ("StreamBitrateBox", bitrate_index),
-            ("StreamCodecBox", codec_index),
-        ] {
-            if let Some(selector) = self.find_opt::<ComboBox>(name).and_then(|b| {
-                b.cast::<windows::UI::Xaml::Controls::Primitives::Selector>()
-                    .ok()
-            }) {
-                let _ = selector.SetSelectedIndex(index);
-            }
-        }
-        Ok(())
-    }
-
-    /// 重置下拉候选（清空后按标签重建）。
-    fn reset_combo_items(&self, name: &str, labels: &[String]) -> Result<()> {
-        use windows::core::HSTRING;
-        use windows::UI::Xaml::Controls::{ComboBox, ComboBoxItem, ContentControl, ItemsControl};
-        let Some(box_) = self.find_opt::<ComboBox>(name) else {
-            return Ok(());
-        };
-        let items = box_.cast::<ItemsControl>()?.Items()?;
-        while items.Size()? > 0 {
-            items.RemoveAtEnd()?;
-        }
-        for label in labels {
-            let item = ComboBoxItem::new()?;
-            let content = windows::Foundation::PropertyValue::CreateString(HSTRING::from(label))?;
-            item.cast::<ContentControl>()?.SetContent(content)?;
-            items.Append(&item)?;
-        }
-        Ok(())
-    }
-
-    /// 画质下拉变更：读全部四个选择 → 预钳制 → 下发（选择与当前生效值一致时跳过，
-    /// 避免程序化回填触发 SetStreamParams 空切换）。
-    pub(crate) fn on_quality_changed(&mut self) -> Result<()> {
-        use windows::UI::Xaml::Controls::{ComboBox, Primitives};
-        if !matches!(self.session_view, SessionView::Negotiated { .. }) {
-            return Ok(());
-        }
-        let Some(active) = self.session.as_ref() else {
-            return Ok(());
-        };
-        let handle = &active.handle;
-
-        let selected = |name: &str| -> i32 {
-            self.find_opt::<ComboBox>(name)
-                .and_then(|b| b.cast::<Primitives::Selector>().ok())
-                .and_then(|s| s.SelectedIndex().ok())
-                .unwrap_or(-1)
-        };
-        let res_idx = selected("StreamResolutionBox");
-        let fps_idx = selected("StreamFpsBox");
-        let bitrate_idx = selected("StreamBitrateBox");
-        let codec_idx = selected("StreamCodecBox");
-
-        // 分辨率 + 帧率：0/负 = 跟随当前
-        let want = match res_idx {
-            i if i > 0 => {
-                let Some((w, h, _)) = self.quality.presets.get(i as usize - 1) else {
-                    return Ok(());
-                };
-                (*w, *h)
-            }
-            _ => (0, 0),
-        };
-        let fps = match fps_idx {
-            i if i > 0 => self
-                .quality_fps_options
-                .get(i as usize - 1)
-                .copied()
-                .unwrap_or(0),
-            _ => 0,
-        };
-        // 选中态与当前生效值一致 → 程序化回填/用户无操作，跳过
-        let unchanged = match want {
-            (0, 0) => fps == 0,
-            (w, h) => {
-                w == self.quality.width
-                    && h == self.quality.height
-                    && (fps == 0 || fps == self.quality.fps)
-            }
-        };
-        if unchanged {
-            return Ok(());
-        }
-        // 预钳制（ios 踩坑：越界静默无流，绝不直接透传）
-        let Some((w, h, fps)) = sess::clamp_stream_request(want.0, want.1, fps, &self.quality)
-        else {
-            return Ok(());
-        };
-        if w != 0 || h != 0 || fps != 0 {
-            handle.send(
-                rc_client_core::session_bridge::SessionCommand::SetStreamParams {
-                    width: w,
-                    height: h,
-                    fps,
-                },
-            );
-        }
-        // 码率：自适应(0) 不下发
-        let bps = [0u32, 8_000_000, 14_000_000, 30_000_000][bitrate_idx.clamp(0, 3) as usize];
-        if bps != 0 {
-            handle.send(rc_client_core::session_bridge::SessionCommand::SetBitrate { bps });
-        }
-        // 编解码：跟随当前(0) 不下发
-        if codec_idx > 0 {
-            if let Some(codec) = self.quality.supported_codecs.get(codec_idx as usize - 1) {
-                let codec = match codec.as_str() {
-                    "hevc" => rc_client_core::display_ctrl::StreamCodec::Hevc,
-                    _ => rc_client_core::display_ctrl::StreamCodec::H264,
-                };
-                handle.send(rc_client_core::session_bridge::SessionCommand::SetCodec { codec });
-            }
-        }
-        Ok(())
-    }
-
-    /// M3.8 显示器切换：与当前采集屏一致时跳过。
-    pub(crate) fn on_display_changed(&mut self) -> Result<()> {
-        use windows::UI::Xaml::Controls::{ComboBox, Primitives};
-        if !matches!(self.session_view, SessionView::Negotiated { .. }) {
-            return Ok(());
-        }
-        let index = self
-            .find_opt::<ComboBox>("StreamDisplayBox")
-            .and_then(|b| b.cast::<Primitives::Selector>().ok())
-            .and_then(|s| s.SelectedIndex().ok())
-            .unwrap_or(-1);
-        if index < 0 {
-            return Ok(());
-        }
-        if let Some((display_id, _)) = self.quality.displays.get(index as usize) {
-            if *display_id != self.quality.active_display_id {
-                if let Some(active) = self.session.as_ref() {
-                    active.handle.send_display_ctrl(
-                        rc_client_core::display_ctrl::DisplayControlMsg::SwitchDisplay {
-                            display_id: *display_id,
-                        },
-                    );
+                        .get(index.saturating_sub(1))
+                        .filter(|_| index > 0)
+                    {
+                        let codec = if codec == "hevc" {
+                            rc_client_core::display_ctrl::StreamCodec::Hevc
+                        } else {
+                            rc_client_core::display_ctrl::StreamCodec::H264
+                        };
+                        handle.send(SessionCommand::SetCodec { codec });
+                    }
+                }
+                // 鼠标模式：与当前生效一致时跳过
+                StreamSetting::Mouse => {
+                    if let Some((mode, _)) = sess::MOUSE_MODES.get(index) {
+                        if self.quality.mouse_mode.as_deref() != Some(*mode) {
+                            handle.send_display_ctrl(
+                                rc_client_core::display_ctrl::DisplayControlMsg::SetMouseMode {
+                                    mode: (*mode).to_string(),
+                                },
+                            );
+                        }
+                    }
+                }
+                StreamSetting::Display => {
+                    if let Some((display_id, _)) = self.quality.displays.get(index) {
+                        if *display_id != self.quality.active_display_id {
+                            handle.send_display_ctrl(
+                                rc_client_core::display_ctrl::DisplayControlMsg::SwitchDisplay {
+                                    display_id: *display_id,
+                                },
+                            );
+                        }
+                    }
                 }
             }
         }
-        Ok(())
+        if setting == StreamSetting::Bitrate && !demo {
+            // 码率档位记进偏好：下次连接沿用，菜单的勾也以它为准
+            let preset = sess::BITRATE_PRESETS[index.min(sess::BITRATE_PRESETS.len() - 1)];
+            self.save_prefs_patch(|prefs| {
+                prefs.apply_stream_patch(rc_client_core::app_prefs::StreamPrefsPatch {
+                    bitrate_preset: Some(preset.to_string()),
+                    ..Default::default()
+                })
+            })?;
+        }
+        if let Some(group) = self.quality_menu.iter_mut().find(|g| g.setting == setting) {
+            group.selected = index;
+        }
+        self.mark_quality_selection()
     }
 
-    /// 鼠标模式变更：与当前生效一致时跳过（防程序化回填空下发）。
-    pub(crate) fn on_mouse_mode_changed(&mut self) -> Result<()> {
-        use windows::UI::Xaml::Controls::{ComboBox, Primitives};
-        if !matches!(self.session_view, SessionView::Negotiated { .. }) {
-            return Ok(());
-        }
-        let index = self
-            .find_opt::<ComboBox>("StreamMouseBox")
-            .and_then(|b| b.cast::<Primitives::Selector>().ok())
-            .and_then(|s| s.SelectedIndex().ok())
-            .unwrap_or(0);
-        let Some((mode, _)) = sess::MOUSE_MODES.get(index.max(0) as usize) else {
+    /// 状态条左侧的圆点：连接中琥珀色、已连上绿色、已断开红色。
+    pub(super) fn session_dot(&self, color: windows::UI::Color) -> Result<()> {
+        let Some(dot) = self.find_opt::<windows::UI::Xaml::Shapes::Ellipse>("SessionDot") else {
             return Ok(());
         };
-        if self.quality.mouse_mode.as_deref() == Some(mode) {
-            return Ok(());
-        }
-        if let Some(active) = self.session.as_ref() {
-            active.handle.send_display_ctrl(
-                rc_client_core::display_ctrl::DisplayControlMsg::SetMouseMode {
-                    mode: (*mode).to_string(),
-                },
-            );
-        }
-        Ok(())
+        let brush = windows::UI::Xaml::Media::SolidColorBrush::new()?;
+        brush.SetColor(color)?;
+        let shape: windows::UI::Xaml::Shapes::Shape = dot.cast()?;
+        shape.SetFill(&brush)
     }
 
     pub(crate) fn set_session_overlay(&self, text: &str, spinner: bool) {
         let _ = self.label("SessionOverlayText", text);
-        if let Some(ring) =
-            self.find_opt::<windows::UI::Xaml::Controls::ProgressRing>("SessionSpinner")
-        {
-            let _ = ring.SetIsActive(spinner);
+        let _ = self.set_visible("SessionSpinner", spinner);
+        // 连接中的三点脉冲是一段循环动画：开始 / 停下由这里控制
+        if let Some(storyboard) = self.find_opt::<Storyboard>("SpinnerPulse") {
+            if spinner {
+                let _ = storyboard.Begin();
+            } else {
+                let _ = storyboard.Stop();
+            }
         }
         let visible = !text.is_empty() || spinner;
         let _ = self.set_visible("SessionOverlay", visible);
@@ -690,4 +653,45 @@ impl App {
         };
         Some(code.to_string())
     }
+}
+
+/// 状态点的三种颜色（与会话窗口的深色令牌一致）。
+const PENDING_DOT: windows::UI::Color = windows::UI::Color {
+    A: 255,
+    R: 0xF0,
+    G: 0xB4,
+    B: 0x29,
+};
+const ONLINE_DOT: windows::UI::Color = windows::UI::Color {
+    A: 255,
+    R: 0x3F,
+    G: 0xB9,
+    B: 0x50,
+};
+const ENDED_DOT: windows::UI::Color = windows::UI::Color {
+    A: 255,
+    R: 0xFF,
+    G: 0x6B,
+    B: 0x6B,
+};
+/// 终端演示窗口的状态点：品牌蓝——不是在连，也不是连上了，只是「演示」。
+#[cfg(debug_assertions)]
+pub(super) const DEMO_DOT: windows::UI::Color = windows::UI::Color {
+    A: 255,
+    R: 0x7F,
+    G: 0xA6,
+    B: 0xFF,
+};
+
+/// 菜单里的图标（Segoe MDL2 Assets）。
+fn menu_icon(glyph: &str, size: f64) -> Result<IconElement> {
+    let icon = FontIcon::new()?;
+    icon.SetFontFamily(
+        windows::UI::Xaml::Media::FontFamily::CreateInstanceWithName(HSTRING::from(
+            "Segoe MDL2 Assets",
+        ))?,
+    )?;
+    icon.SetGlyph(HSTRING::from(glyph))?;
+    icon.SetFontSize(size)?;
+    icon.cast()
 }

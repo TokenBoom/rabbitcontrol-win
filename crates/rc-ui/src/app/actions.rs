@@ -3,6 +3,7 @@
 use std::sync::mpsc::Sender;
 
 use crate::biz::auth::AccountSession;
+pub(crate) use crate::biz::session::StreamSetting;
 use rc_client_core::auth_client::MyDeviceInfo;
 use rc_client_core::session_bridge::SessionHandle;
 use windows::core::Interface;
@@ -26,10 +27,11 @@ pub(crate) enum Action {
     SaveServer,
     Logout,
     RefreshDevices,
+    /// 设备搜索框的内容变了（边打边过滤）。
+    DeviceSearch(String),
     Nav(Page),
     CopyId,
     AssistToggled(bool),
-    ToggleCodeVisibility,
     AdvancedToggle,
     HistoryTabFav(bool),
     DeviceConnect(String),
@@ -48,12 +50,10 @@ pub(crate) enum Action {
     BannerDisconnect,
     SessionDisconnect,
     SessionReconnect,
-    SessionQualityToggle,
-    StreamQualityChanged,
-    MouseModeChanged,
     StageRectChanged(u32, u32),
+    /// 会话窗口「显示与画质」菜单里选了一项（哪一组、第几个选项）。
+    StreamSettingPicked(StreamSetting, usize),
     SessionFullscreen,
-    DisplayChanged,
     ToolToggle,
     ToolTab(u8),
     /// 点了已经选中的工具 tab（ToggleButton 把它取消了选中）。

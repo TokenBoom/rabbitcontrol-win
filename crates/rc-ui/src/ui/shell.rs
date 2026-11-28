@@ -98,7 +98,14 @@ impl Shell {
 
     pub fn show_and_run(&self, mut on_event: impl FnMut() -> Result<()>) -> Result<()> {
         unsafe {
-            ShowWindow(self.window.0, SW_SHOWNORMAL);
+            ShowWindow(
+                self.window.0,
+                if crate::ui::no_activate() {
+                    SW_SHOWNOACTIVATE
+                } else {
+                    SW_SHOWNORMAL
+                },
+            );
             let mut msg = MSG::default();
             loop {
                 match GetMessageW(&mut msg, None, 0, 0).0 {

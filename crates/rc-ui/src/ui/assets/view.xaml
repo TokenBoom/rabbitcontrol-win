@@ -63,22 +63,27 @@
             </StackPanel>
           </ToggleButton>
         </StackPanel>
-        <!-- 设置（UU 底部入口） -->
+        <!-- 页脚：第一行连接状态（圆点 + 文字）与「退出」，第二行当前账号。
+             邮箱再长也只在第二行省略，不会把状态和「退出」挤出侧栏 -->
         <Border Grid.Row="3" BorderBrush="{ThemeResource DividerBrush}" BorderThickness="0,1,0,0" Padding="14,10">
-          <Grid>
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <StackPanel Orientation="Horizontal" Spacing="12">
-              <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE713;" FontSize="16" Foreground="{ThemeResource TextSecondaryBrush}"/>
-              <TextBlock x:Name="StatusText" Text="信令未连接" Style="{StaticResource CaptionText}" VerticalAlignment="Center"/>
-            </StackPanel>
-            <!-- 登录成功后这里显示当前账号（登录浮层隐藏后，用户靠它知道现在是谁登录的） -->
-            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-              <TextBlock x:Name="AccountEmail" Style="{StaticResource CaptionText}" VerticalAlignment="Center" MaxWidth="260" TextTrimming="CharacterEllipsis"/>
-              <Button x:Name="LogoutButton" Content="退出" Style="{StaticResource LinkButton}"/>
-            </StackPanel>
+          <Grid RowSpacing="4">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid ColumnSpacing="12">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Ellipse x:Name="StatusDot" Width="7" Height="7" Fill="{ThemeResource OfflineBrush}" VerticalAlignment="Center"/>
+                <TextBlock x:Name="StatusText" Text="信令连接中…" Style="{StaticResource CaptionText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+              </StackPanel>
+              <Button x:Name="LogoutButton" Grid.Column="1" Content="退出" Style="{StaticResource LinkButton}" VerticalAlignment="Center"/>
+            </Grid>
+            <!-- 登录成功后显示当前账号（登录浮层隐藏后，用户靠它知道现在是谁登录的）；完整邮箱在提示里 -->
+            <TextBlock x:Name="AccountEmail" Grid.Row="1" Style="{StaticResource CaptionText}" TextTrimming="CharacterEllipsis"/>
           </Grid>
         </Border>
       </Grid>
@@ -87,85 +92,68 @@
     <!-- 内容区 -->
     <Grid Grid.Column="1">
 
-      <!-- 我的设备 -->
+      <!-- 我的设备：只有列表。本机的验证码 / 开关属于「开始协助」页（与 UU / ToDesk 一致） -->
       <Grid x:Name="DevicesPage" Visibility="Collapsed">
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto"/>
           <RowDefinition Height="Auto"/>
-          <RowDefinition Height="Auto"/>
           <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
-        <!-- M5 被控服务卡（开关 + 临时码 + 密码） -->
-        <Border Grid.Row="0" Margin="24,20,24,0" CornerRadius="10" Background="#FFFFFF" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1" Padding="16,12">
-          <Grid>
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="Auto"/>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-              <TextBlock Text="本机被控" Style="{StaticResource SubtitleText}" VerticalAlignment="Center"/>
-              <ToggleSwitch x:Name="HostSwitch" OnContent="" OffContent="" Margin="0"/>
-            </StackPanel>
-            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right" VerticalAlignment="Center">
-              <TextBlock Text="临时验证码" Foreground="{ThemeResource TextTertiaryBrush}" VerticalAlignment="Center" FontSize="13"/>
-              <Border Background="#0F1E33" CornerRadius="6" Padding="10,4" Visibility="Collapsed" x:Name="HostCodeBadge">
-                <TextBlock x:Name="HostCode" Text="——— ———" FontFamily="Consolas" FontSize="16" FontWeight="SemiBold" Foreground="#7FE0A8"/>
-              </Border>
-            </StackPanel>
-            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="12,0,0,0">
-              <PasswordBox x:Name="HostPassword" PlaceholderText="自定义密码（可选）" Width="180" Height="32"/>
-              <TextBlock Text="" x:Name="HostError" Foreground="{ThemeResource DangerBrush}" FontSize="11" VerticalAlignment="Center"/>
-            </StackPanel>
-          </Grid>
-        </Border>
-        <!-- 被控状态横幅（原 Row1 顺延） -->
-        <Grid Grid.Row="2" Margin="24,12,24,12">
-          <StackPanel Orientation="Horizontal" Spacing="12">
+        <!-- 页头：标题 + 状态；右边搜索与刷新（服务器地址只在登录页与设置页出现，首页不放） -->
+        <Grid Margin="24,20,24,12">
+          <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
             <TextBlock Text="我的设备" Style="{StaticResource TitleText}"/>
-            <TextBlock x:Name="ServerOriginCaption" VerticalAlignment="Center" Style="{StaticResource CaptionText}"/>
             <TextBlock x:Name="DevicesStatus" VerticalAlignment="Center" Style="{StaticResource CaptionText}"
                        Foreground="{ThemeResource PrimaryBrush}" MaxWidth="380" TextTrimming="CharacterEllipsis" Visibility="Collapsed"/>
           </StackPanel>
-          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
-            <Button x:Name="RefreshDevices" Style="{StaticResource SecondaryButton}">
-              <StackPanel Orientation="Horizontal" Spacing="8">
-                <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE72C;" FontSize="14"/>
-                <TextBlock Text="刷新" Style="{StaticResource BodyText}"/>
-              </StackPanel>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Spacing="8">
+            <!-- 文本框自己就是这个药丸（图标叠在左侧留白上）：聚焦描边沿圆角画一圈，清除按钮也落在框内 -->
+            <Grid Width="220">
+              <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE721;" FontSize="13" Foreground="{ThemeResource TextTertiaryBrush}"
+                        VerticalAlignment="Center" HorizontalAlignment="Left" Margin="12,0,0,0" IsHitTestVisible="False"/>
+              <TextBox x:Name="DeviceSearch" Style="{StaticResource SoftTextBox}" PlaceholderText="搜索设备名或 ID" FontSize="13"
+                       Padding="34,0,8,0" AutomationProperties.Name="搜索设备"/>
+            </Grid>
+            <Button x:Name="RefreshDevices" Style="{StaticResource LightGhostIconButton}" AutomationProperties.Name="刷新设备列表" ToolTipService.ToolTip="刷新">
+              <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE72C;" FontSize="15"/>
             </Button>
           </StackPanel>
         </Grid>
 
-        <!-- 被控状态横幅（M5：被控会话进行中展开） -->
-        <Border x:Name="HostBanner" Grid.Row="1" Margin="24,12,24,12" CornerRadius="10" Background="{ThemeResource BannerGradient}" Padding="20,14" Visibility="Collapsed">
+        <!-- 被控中横幅（M5：被控会话进行中展开） -->
+        <Border x:Name="HostBanner" Grid.Row="1" Margin="24,0,24,12" CornerRadius="12" Background="{ThemeResource BannerGradient}" Padding="20,14" Visibility="Collapsed">
           <Grid>
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="*"/>
               <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
             <StackPanel Orientation="Horizontal" Spacing="14">
-              <TextBlock Text="本机被控中" FontSize="16" FontWeight="Bold" Foreground="{ThemeResource TextOnPrimaryBrush}" VerticalAlignment="Center"/>
-              <TextBlock x:Name="BannerTimer" Text="00:00:00" FontSize="16" FontWeight="SemiBold" Foreground="{ThemeResource TextOnPrimaryBrush}" VerticalAlignment="Center"/>
+              <Ellipse Width="8" Height="8" Fill="{ThemeResource TextOnPrimaryBrush}" VerticalAlignment="Center"/>
+              <TextBlock Text="本机被控中" FontSize="15" FontWeight="SemiBold" Foreground="{ThemeResource TextOnPrimaryBrush}" VerticalAlignment="Center"/>
+              <TextBlock x:Name="BannerTimer" Text="00:00:00" FontSize="15" FontWeight="SemiBold" Foreground="{ThemeResource TextOnPrimaryBrush}" VerticalAlignment="Center" FontFamily="Consolas"/>
               <TextBlock x:Name="BannerSub" Text="" FontSize="12" Foreground="#D8E4FF" VerticalAlignment="Center"/>
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-              <Button x:Name="BannerDisconnect" Content="断开所有远程" Style="{StaticResource SecondaryButton}" Height="32"/>
+              <Button x:Name="BannerDisconnect" Content="断开所有远程" Style="{StaticResource SecondaryButton}" Height="32" Background="#33FFFFFF" BorderBrush="#55FFFFFF" Foreground="{ThemeResource TextOnPrimaryBrush}"/>
             </StackPanel>
           </Grid>
         </Border>
 
-        <ScrollViewer Grid.Row="2" Padding="24,0,24,16" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-          <StackPanel x:Name="DeviceListHost" Spacing="10"/>
-        </ScrollViewer>
-        <StackPanel x:Name="DevicesEmpty" Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10" IsHitTestVisible="False">
-          <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE7F4;" FontSize="42" Foreground="{ThemeResource OfflineBrush}"/>
-          <TextBlock Text="账号下暂无设备" Style="{StaticResource SubtitleText}" HorizontalAlignment="Center"/>
-          <TextBlock Text="在本机或其他设备登录后，设备会出现在这里" Style="{StaticResource CaptionText}" HorizontalAlignment="Center"/>
-        </StackPanel>
+        <Grid Grid.Row="2">
+          <ScrollViewer Padding="24,0,24,16" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel x:Name="DeviceListHost" Spacing="10"/>
+          </ScrollViewer>
+          <StackPanel x:Name="DevicesEmpty" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6" IsHitTestVisible="False">
+            <Border Width="64" Height="64" CornerRadius="18" Background="{ThemeResource AccentSoftBrush}" HorizontalAlignment="Center">
+              <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE7F4;" FontSize="26" Foreground="{ThemeResource AccentStrongBrush}"/>
+            </Border>
+            <TextBlock x:Name="DevicesEmptyTitle" Text="账号下暂无设备" Style="{StaticResource SubtitleText}" HorizontalAlignment="Center" Margin="0,10,0,0"/>
+            <TextBlock x:Name="DevicesEmptyHint" Text="在本机或其他设备登录后，设备会出现在这里" Style="{StaticResource CaptionText}" HorizontalAlignment="Center"/>
+          </StackPanel>
+        </Grid>
       </Grid>
 
-      <!-- 开始协助 -->
+            <!-- 开始协助：本机的 ID / 验证码 / 开关都在这一页（唯一入口），下面是连接伙伴 -->
       <Grid x:Name="AssistPage" Visibility="Collapsed">
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto"/>
@@ -175,67 +163,70 @@
           <TextBlock Text="远程协助" Style="{StaticResource TitleText}"/>
         </Grid>
         <ScrollViewer Grid.Row="1" Padding="24,0,24,16" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-          <StackPanel Spacing="12">
+          <StackPanel Spacing="14">
 
-            <!-- 本设备卡 -->
+            <!-- 本机：让伙伴连进来 -->
             <Border Style="{StaticResource CardBorder}">
-              <StackPanel Spacing="14">
-                <Grid>
-                  <TextBlock Text="本设备" Style="{StaticResource SubtitleText}" VerticalAlignment="Center"/>
-                  <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
-                    <TextBlock Text="允许他人远程协助" Style="{StaticResource BodyText}" VerticalAlignment="Center"/>
-                    <ToggleSwitch x:Name="AssistToggle" MinWidth="0" Margin="0" OnContent="" OffContent=""/>
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Spacing="2">
+                  <TextBlock Text="本机设备 ID" Style="{StaticResource CaptionText}"/>
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock x:Name="LocalIdText" Text="··· ··· ···" FontSize="32" FontWeight="Bold" FontFamily="Consolas" Foreground="{ThemeResource PrimaryBrush}"/>
+                    <Button x:Name="CopyIdButton" Style="{StaticResource LightGhostIconButton}" AutomationProperties.Name="复制并分享" ToolTipService.ToolTip="复制 ID 与验证码" VerticalAlignment="Center">
+                      <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE8C8;" FontSize="15"/>
+                    </Button>
+                    <TextBlock x:Name="LocalNotice" Text="" FontSize="12" Foreground="{ThemeResource SuccessBrush}" VerticalAlignment="Center"/>
                   </StackPanel>
-                </Grid>
-                <Border BorderBrush="{ThemeResource DividerBrush}" BorderThickness="0,1,0,0" Padding="0,14,0,0">
-                  <Grid>
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="Auto"/>
-                      <ColumnDefinition Width="*"/>
-                      <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <StackPanel Spacing="4">
-                      <TextBlock Text="本设备 ID" Style="{StaticResource CaptionText}"/>
-                      <TextBlock x:Name="LocalIdText" Text="··· ··· ···" FontSize="30" FontWeight="Bold" FontFamily="Consolas" Foreground="{ThemeResource PrimaryBrush}"/>
-                    </StackPanel>
-                    <StackPanel Grid.Column="1" Margin="28,0,0,0" Spacing="4" VerticalAlignment="Center">
-                      <TextBlock Text="验证方式 · 临时验证码" Style="{StaticResource CaptionText}"/>
-                      <StackPanel Orientation="Horizontal" Spacing="10">
-                        <TextBlock x:Name="CodeMaskText" Text="—— 待被控验证接通 ——" FontSize="18" FontFamily="Consolas" VerticalAlignment="Center" Foreground="{ThemeResource TextSecondaryBrush}"/>
-                        <Button x:Name="ToggleCodeButton" Content="&#xE7B3;" Style="{StaticResource CaptionButton}" IsEnabled="False" AutomationProperties.Name="显示或隐藏验证码"/>
-                      </StackPanel>
-                      <TextBlock Text="M5 被控链路接通后，每次远控结束自动轮换" Style="{StaticResource CaptionText}"/>
-                    </StackPanel>
-                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Bottom">
-                      <Button x:Name="CopyIdButton" Style="{StaticResource PrimaryButton}" Height="36">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                          <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE8C8;" FontSize="14"/>
-                          <TextBlock Text="复制并分享" Style="{StaticResource BodyText}" Foreground="{ThemeResource TextOnPrimaryBrush}"/>
-                        </StackPanel>
-                      </Button>
-                    </StackPanel>
-                  </Grid>
-                </Border>
-              </StackPanel>
+                  <!-- 验证码：临时码（每次远控结束自动刷新，↻ 可手动换）或自定义密码 -->
+                  <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,10,0,0" VerticalAlignment="Center">
+                    <TextBlock Text="验证码" Style="{StaticResource CaptionText}" VerticalAlignment="Center"/>
+                    <Border x:Name="HostCodeBadge" Background="{ThemeResource AccentSoftBrush}" CornerRadius="8" Padding="10,4" VerticalAlignment="Center">
+                      <TextBlock x:Name="HostCode" Text="开启后显示" FontFamily="Consolas" FontSize="16" FontWeight="SemiBold" Foreground="{ThemeResource AccentStrongBrush}"/>
+                    </Border>
+                    <Button x:Name="AssistRotateCode" Style="{StaticResource LightGhostIconButton}" AutomationProperties.Name="刷新临时验证码" ToolTipService.ToolTip="换一个临时验证码">
+                      <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE72C;" FontSize="14"/>
+                    </Button>
+                  </StackPanel>
+                  <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,10,0,0" VerticalAlignment="Center">
+                    <TextBlock Text="自定义密码" Style="{StaticResource CaptionText}" VerticalAlignment="Center"/>
+                    <PasswordBox x:Name="HostPassword" Style="{StaticResource SoftPasswordBox}" PlaceholderText="留空用临时验证码" Width="200"/>
+                    <TextBlock Text="" x:Name="HostError" Foreground="{ThemeResource DangerBrush}" FontSize="12" VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="260"/>
+                  </StackPanel>
+                </StackPanel>
+                <!-- 总开关：开了才能被连。临时码每次远控结束自动换；密码验证通过后自动接受 -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="14" VerticalAlignment="Top" Margin="16,4,0,0">
+                  <StackPanel Spacing="2" HorizontalAlignment="Right">
+                    <TextBlock Text="允许他人远程协助" Style="{StaticResource BodyText}" HorizontalAlignment="Right"/>
+                    <TextBlock Text="关闭时任何人都连不进本机" Style="{StaticResource CaptionText}" HorizontalAlignment="Right"/>
+                  </StackPanel>
+                  <ToggleSwitch x:Name="HostSwitch" OnContent="" OffContent="" Margin="0" VerticalAlignment="Center"/>
+                </StackPanel>
+              </Grid>
             </Border>
 
-            <!-- 远控伙伴设备卡 -->
+            <!-- 连接伙伴设备 -->
             <Border Style="{StaticResource CardBorder}">
               <StackPanel Spacing="12">
-                <TextBlock Text="远控伙伴设备" Style="{StaticResource SubtitleText}"/>
-                <TextBlock Text="输入对方的 9 位设备 ID 发起远程控制" Style="{StaticResource CaptionText}"/>
+                <StackPanel Spacing="2">
+                  <TextBlock Text="连接伙伴设备" Style="{StaticResource SubtitleText}"/>
+                  <TextBlock Text="输入对方的 9 位设备 ID 发起远程控制" Style="{StaticResource CaptionText}"/>
+                </StackPanel>
                 <Grid ColumnSpacing="10">
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                   </Grid.ColumnDefinitions>
-                  <TextBox x:Name="PeerCodeBox" PlaceholderText="例如 879 009 692" MaxLength="11" Height="40" FontFamily="Consolas" FontSize="16" HorizontalAlignment="Stretch"/>
-                  <Button x:Name="ConnectPeerButton" Grid.Column="1" Content="连接" Style="{StaticResource PrimaryButton}" Width="110" IsEnabled="False"/>
-                  <Button x:Name="PeerAdvancedButton" Grid.Column="2" Content="选项" Style="{StaticResource SecondaryButton}"/>
+                  <TextBox x:Name="PeerCodeBox" Style="{StaticResource SoftTextBox}" PlaceholderText="例如 879 009 692" MaxLength="11" Height="40" FontFamily="Consolas" FontSize="16" HorizontalAlignment="Stretch"/>
+                  <Button x:Name="ConnectPeerButton" Grid.Column="1" Content="连接" Style="{StaticResource PrimaryButton}" Width="110" Height="40" IsEnabled="False"/>
+                  <Button x:Name="PeerAdvancedButton" Grid.Column="2" Content="选项" Style="{StaticResource SecondaryButton}" Height="40"/>
                 </Grid>
                 <StackPanel x:Name="PeerAdvancedRow" Orientation="Horizontal" Spacing="16" Visibility="Collapsed">
-                  <PasswordBox x:Name="PeerPasswordBox" PlaceholderText="对方设备的连接密码（可选）" Width="260"/>
+                  <PasswordBox x:Name="PeerPasswordBox" Style="{StaticResource SoftPasswordBox}" PlaceholderText="对方设备的连接密码（可选）" Width="260"/>
                   <CheckBox x:Name="WatchOnlyCheck" Content="仅观看，不控制"/>
                 </StackPanel>
                 <TextBlock x:Name="AssistError" Style="{StaticResource CaptionText}" Foreground="{ThemeResource DangerBrush}" TextWrapping="Wrap"/>
@@ -245,12 +236,14 @@
             <!-- 最近 / 收藏 -->
             <Border Style="{StaticResource CardBorder}">
               <StackPanel Spacing="12">
-                <StackPanel Orientation="Horizontal" Spacing="6">
-                  <ToggleButton x:Name="HistoryTabRecent" Content="最近连接" CornerRadius="6" BorderThickness="0" Padding="14,6" Background="{ThemeResource PrimaryBrush}" IsChecked="True">
-                    <ToggleButton.Resources/>
-                  </ToggleButton>
-                  <ToggleButton x:Name="HistoryTabFav" Content="收藏" CornerRadius="6" BorderThickness="0" Padding="14,6" Background="Transparent"/>
-                </StackPanel>
+                <Grid>
+                  <Border Background="{ThemeResource FieldFillBrush}" CornerRadius="8" Padding="2" HorizontalAlignment="Left">
+                    <StackPanel Orientation="Horizontal">
+                      <ToggleButton x:Name="HistoryTabRecent" Content="最近连接" Style="{StaticResource SegmentTabLight}" IsChecked="True"/>
+                      <ToggleButton x:Name="HistoryTabFav" Content="收藏" Style="{StaticResource SegmentTabLight}"/>
+                    </StackPanel>
+                  </Border>
+                </Grid>
                 <StackPanel x:Name="HistoryListHost" Spacing="8"/>
                 <TextBlock x:Name="HistoryEmpty" Text="暂无记录" Style="{StaticResource CaptionText}" HorizontalAlignment="Center" Margin="0,6"/>
               </StackPanel>
@@ -259,7 +252,7 @@
         </ScrollViewer>
       </Grid>
 
-      <!-- 收藏设备 -->
+            <!-- 收藏设备 -->
       <Grid x:Name="FavoritesPage" Visibility="Collapsed">
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto"/>
@@ -288,11 +281,14 @@
           <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
         <TextBlock Text="设置" Style="{StaticResource DisplayText}" Margin="24,20,24,10"/>
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="24" Margin="24,0,24,10">
-          <ToggleButton x:Name="TabGeneral" Content="常规" FontWeight="SemiBold" BorderThickness="0" Background="Transparent" Padding="0,4" IsChecked="True"/>
-          <ToggleButton x:Name="TabSecurity" Content="安全" BorderThickness="0" Background="Transparent" Padding="0,4"/>
-          <ToggleButton x:Name="TabNetwork" Content="网络" BorderThickness="0" Background="Transparent" Padding="0,4"/>
-        </StackPanel>
+        <!-- 分段开关（与协助页的「最近连接 / 收藏」同一种）：选中项白底浮起 -->
+        <Border Grid.Row="1" Background="{ThemeResource FieldFillBrush}" CornerRadius="8" Padding="2" HorizontalAlignment="Left" Margin="24,0,24,10">
+          <StackPanel Orientation="Horizontal">
+            <ToggleButton x:Name="TabGeneral" Content="常规" Style="{StaticResource SegmentTabLight}" IsChecked="True"/>
+            <ToggleButton x:Name="TabSecurity" Content="安全" Style="{StaticResource SegmentTabLight}"/>
+            <ToggleButton x:Name="TabNetwork" Content="网络" Style="{StaticResource SegmentTabLight}"/>
+          </StackPanel>
+        </Border>
         <ScrollViewer Grid.Row="2" Padding="24,0,24,16" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" MaxWidth="720" HorizontalAlignment="Left">
           <StackPanel Spacing="4">
 
@@ -308,7 +304,7 @@
                     <TextBlock Text="画质偏好" Style="{StaticResource BodyText}"/>
                     <TextBlock Text="控制远程设备时的码率与帧率档位" Style="{StaticResource CaptionText}"/>
                   </StackPanel>
-                  <ComboBox x:Name="QualityBox" Grid.Column="1" Width="150" SelectedIndex="1">
+                  <ComboBox x:Name="QualityBox" Grid.Column="1" Width="150" SelectedIndex="1" Style="{StaticResource SoftComboBox}">
                     <ComboBoxItem Content="智能码率"/>
                     <ComboBoxItem Content="流畅 8 Mbps"/>
                     <ComboBoxItem Content="均衡 14 Mbps"/>
@@ -354,7 +350,7 @@
                     <TextBlock Text="填代理地址（如 socks5://127.0.0.1:1080），留空直连；REST/信令/中继自动走代理" Style="{StaticResource CaptionText}" TextWrapping="Wrap"/>
                   </StackPanel>
                   <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
-                    <TextBox x:Name="ProxyUrl" Width="180" Height="32" FontSize="12"
+                    <TextBox x:Name="ProxyUrl" Style="{StaticResource SoftTextBox}" Width="180" Height="32" FontSize="12"
                              PlaceholderText="socks5://host:port"/>
                     <Button x:Name="ProxyApplyButton" Content="应用" Style="{StaticResource SecondaryButton}" Height="32"/>
                   </StackPanel>
@@ -413,6 +409,19 @@
                     <ColumnDefinition Width="Auto"/>
                   </Grid.ColumnDefinitions>
                   <StackPanel Spacing="2">
+                    <TextBlock Text="允许其他账号发起协助" Style="{StaticResource BodyText}"/>
+                    <TextBlock Text="关闭后只有本账号下的设备能控制本机，其他账号的协助请求一律拒绝" Style="{StaticResource CaptionText}" TextWrapping="Wrap"/>
+                  </StackPanel>
+                  <ToggleSwitch x:Name="AssistToggle" Grid.Column="1" OnContent="" OffContent="" Margin="0"/>
+                </Grid>
+              </Border>
+              <Border Style="{StaticResource SettingRowBorder}">
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                  </Grid.ColumnDefinitions>
+                  <StackPanel Spacing="2">
                     <TextBlock Text="断开后锁定远程屏幕" Style="{StaticResource BodyText}"/>
                     <TextBlock Text="主动断开被控会话时自动锁定对方屏幕" Style="{StaticResource CaptionText}"/>
                   </StackPanel>
@@ -425,12 +434,12 @@
                     <TextBlock Text="被控验证方式" Style="{StaticResource BodyText}"/>
                     <TextBlock Text="临时验证码每次远控结束自动刷新；自定义密码固定不变。密码验证通过后自动接受连接" Style="{StaticResource CaptionText}" TextWrapping="Wrap"/>
                   </StackPanel>
-                  <ComboBox x:Name="HostVerifyMode" HorizontalAlignment="Left" MinWidth="280" Height="32" SelectedIndex="0">
+                  <ComboBox x:Name="HostVerifyMode" HorizontalAlignment="Left" MinWidth="280" SelectedIndex="0" Style="{StaticResource SoftComboBox}">
                     <ComboBoxItem Content="临时验证码（自动刷新）"/>
                     <ComboBoxItem Content="自定义密码"/>
                   </ComboBox>
                   <StackPanel x:Name="HostVerifyCustomPanel" Orientation="Horizontal" Spacing="6" Visibility="Collapsed">
-                    <PasswordBox x:Name="HostVerifyPassword" Width="220" Height="32" PlaceholderText="自定义访问密码"/>
+                    <PasswordBox x:Name="HostVerifyPassword" Style="{StaticResource SoftPasswordBox}" Width="220" PlaceholderText="自定义访问密码"/>
                     <Button x:Name="HostVerifySaveButton" Content="保存密码" Style="{StaticResource SecondaryButton}" Height="32"/>
                   </StackPanel>
                   <Button x:Name="HostRotateCodeButton" Content="刷新临时验证码" Style="{StaticResource SecondaryButton}" Height="32" HorizontalAlignment="Left"/>
@@ -478,7 +487,7 @@
                       <ColumnDefinition Width="*"/>
                       <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBox x:Name="NetworkOrigin" Height="36" VerticalContentAlignment="Center"/>
+                    <TextBox x:Name="NetworkOrigin" Style="{StaticResource SoftTextBox}" Height="36"/>
                     <Button x:Name="ProbeServer" Grid.Column="1" Content="探测并保存" Style="{StaticResource PrimaryButton}" Height="36"/>
                   </Grid>
                   <TextBlock x:Name="NetworkError" Style="{StaticResource CaptionText}" Foreground="{ThemeResource DangerBrush}" TextWrapping="Wrap"/>
@@ -509,7 +518,7 @@
         <Border Width="360" Background="White" CornerRadius="10" Padding="18">
           <StackPanel Spacing="10">
             <TextBlock Text="重命名设备" Style="{StaticResource SubtitleText}"/>
-            <TextBox x:Name="RenamePromptInput" Height="34"/>
+            <TextBox x:Name="RenamePromptInput" Style="{StaticResource SoftTextBox}" Height="36"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
               <Button x:Name="RenamePromptCancel" Content="取消" Style="{StaticResource SecondaryButton}" Height="32"/>
               <Button x:Name="RenamePromptOk" Content="确定" Style="{StaticResource PrimaryButton}" Height="32" Width="90"/>
@@ -548,13 +557,11 @@
       <Border Background="White" CornerRadius="14" Padding="20,22" BorderBrush="#E8E8F0" BorderThickness="1" Width="360" HorizontalAlignment="Center">
         <StackPanel Spacing="0">
           <TextBlock Text="账号邮箱" Style="{StaticResource FieldLabel}"/>
-          <TextBox x:Name="Email" AutomationProperties.Name="账号邮箱" PlaceholderText="请输入邮箱地址"
-                   Background="#F8F9FB" BorderBrush="Transparent" CornerRadius="8"
-                   Padding="12,10" Margin="0,6,0,14" FontSize="14" InputScope="EmailSmtpAddress"/>
+          <TextBox x:Name="Email" Style="{StaticResource SoftTextBox}" AutomationProperties.Name="账号邮箱" PlaceholderText="请输入邮箱地址"
+                   Padding="12,9" Margin="0,6,0,14" FontSize="14" InputScope="EmailSmtpAddress"/>
           <TextBlock Text="密码" Style="{StaticResource FieldLabel}"/>
-          <PasswordBox x:Name="Password" AutomationProperties.Name="密码" PlaceholderText="请输入密码"
-                       Background="#F8F9FB" BorderBrush="Transparent" CornerRadius="8"
-                       Padding="12,10" Margin="0,6,0,0" FontSize="14"/>
+          <PasswordBox x:Name="Password" Style="{StaticResource SoftPasswordBox}" AutomationProperties.Name="密码" PlaceholderText="请输入密码"
+                       Padding="12,9" Margin="0,6,0,0" FontSize="14"/>
           <TextBlock x:Name="LoginError" Foreground="{ThemeResource DangerBrush}" TextWrapping="Wrap" FontSize="12" Margin="0,8,0,0"/>
           <Button x:Name="SignIn" Content="登录" Style="{StaticResource PrimaryButton}" Height="42" Margin="0,16,0,0"
                   HorizontalAlignment="Stretch"/>
@@ -578,8 +585,8 @@
           <TextBlock Text="服务器设置" Style="{StaticResource SubtitleText}"/>
           <TextBlock Text="连接时将自动探测服务器并校验 Root CA 证书。" FontSize="13" Foreground="{ThemeResource TextTertiaryBrush}" Margin="0,8,0,20" TextWrapping="Wrap"/>
           <TextBlock Text="服务器地址" Style="{StaticResource FieldLabel}"/>
-          <TextBox x:Name="Origin" AutomationProperties.Name="服务器地址" PlaceholderText="https://主机:端口" FontSize="14"
-                   Background="#F8F9FB" BorderBrush="Transparent" CornerRadius="8" Padding="12,10" Margin="0,6,0,6"/>
+          <TextBox x:Name="Origin" Style="{StaticResource SoftTextBox}" AutomationProperties.Name="服务器地址" PlaceholderText="https://主机:端口" FontSize="14"
+                   Padding="12,9" Margin="0,6,0,6"/>
           <TextBlock Text="仅填主机名时使用 HTTPS 和端口 21118，也可输入完整地址。本机调试支持 HTTP。" FontSize="12" Foreground="{ThemeResource TextTertiaryBrush}" TextWrapping="Wrap"/>
           <TextBlock x:Name="SettingsError" Foreground="{ThemeResource DangerBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
           <Button x:Name="SaveServer" Content="保存地址" Style="{StaticResource PrimaryButton}" Height="42" Margin="0,16,0,0"/>

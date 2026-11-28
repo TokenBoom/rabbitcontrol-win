@@ -14,6 +14,7 @@ use windows::{
     core::{Error, Interface, Result, HSTRING, PCWSTR},
     Win32::{
         Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
+        Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE},
         Graphics::Gdi::{
             GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
         },
@@ -108,6 +109,14 @@ impl SessionWindow {
                 .WindowHandle()
                 .ctx(|| "会话窗口：取 Island 子窗口".to_string())?;
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, island.0);
+            // 系统标题栏跟着内容走深色（Win10 1809+ / Win11）：浅色标题栏压在深色界面上很突兀
+            let dark_mode: i32 = 1;
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_USE_IMMERSIVE_DARK_MODE,
+                &dark_mode as *const i32 as *mut _,
+                std::mem::size_of::<i32>() as u32,
+            );
             fit_island(hwnd, island);
             let content = XamlReader::Load(include_str!("assets/session_window.xaml"))
                 .ctx(|| "会话窗口：解析 XAML".to_string())?;
@@ -152,8 +161,18 @@ impl SessionWindow {
     /// 显示并前置。
     pub fn show(&self) {
         unsafe {
-            ShowWindow(self.hwnd, SW_SHOWNORMAL);
-            let _ = SetForegroundWindow(self.hwnd);
+            let quiet = crate::ui::no_activate();
+            ShowWindow(
+                self.hwnd,
+                if quiet {
+                    SW_SHOWNOACTIVATE
+                } else {
+                    SW_SHOWNORMAL
+                },
+            );
+            if !quiet {
+                let _ = SetForegroundWindow(self.hwnd);
+            }
         }
     }
 

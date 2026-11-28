@@ -47,6 +47,8 @@ const DOUBLE_CLICK_SLACK: f64 = 4.0;
 const WHEEL_LINES_PER_NOTCH: isize = 3;
 /// 面板拖动尺寸会连续触发 `Resized`：停稳这么多 tick 再把新行列数告诉远端。
 const RESIZE_DEBOUNCE_TICKS: u64 = 2;
+/// 终端的轻提示停留多久（tick × 50ms = 4 秒），到点自己收起。
+const TOAST_TICKS: u64 = 80;
 /// 滚动条滑块最短长度（逻辑像素），再短就抓不住了。
 const MIN_THUMB: f64 = 24.0;
 /// 滚动条滑块的宽度与它离画面右缘的间隙（逻辑像素；宽度与 XAML 里 `TerminalThumb` 的 `Width` 一致）。
@@ -497,9 +499,51 @@ impl App {
         self.set_visible("ToolSplitter", true)?;
         self.apply_tool_width()?;
         // 演示里「终端」一直开着：输入照常走编码与回显
-        self.terminal_id = Some(0);
+        self.terminal_demo_toggle(true)?;
+        // 没有真实会话：头部别停在「正在连接…」，画面区说明这里本该是远程桌面
+        let _ = self.label("SessionStatus", "终端演示");
+        let _ = self.session_dot(super::session_view::DEMO_DOT);
+        self.set_session_overlay("演示模式 · 远程画面显示在这里（本窗口只演示终端）", false);
+        // 画质菜单给一组有代表性的值：常见的三档预设、三档帧率、H.264 / HEVC、两块显示器
+        self.quality = crate::biz::session::QualityState {
+            presets: demo_presets(),
+            width: 1920,
+            height: 1080,
+            fps: 60,
+            max_fps: 120,
+            codec: Some("h264".to_string()),
+            supported_codecs: vec!["h264".to_string(), "hevc".to_string()],
+            client_supports_hevc: true,
+            mouse_mode: Some("smart".to_string()),
+            displays: vec![(0, "显示器 1".to_string()), (1, "显示器 2".to_string())],
+            active_display_id: 0,
+        };
+        self.quality_fps_options = vec![30, 60, 120];
+        self.sync_quality_menu()?;
+        let _ = self.label(
+            "SessionBackend",
+            &crate::biz::session::session_summary(1920, 1080, 60, "演示", false),
+        );
+        let _ = self.set_visible("SessionBackendChip", true);
         self.set_terminal_hint("调试演示：输出是脚本放的，键入会本地回显")?;
         self.focus_terminal()?;
+        self.terminal_dirty = true;
+        Ok(())
+    }
+
+    /// 演示里开 / 关终端：没有远端可下发，直接切画面——关掉回到空态，
+    /// 再开时脚本从头放一遍（输入照常走编码与本地回显）。
+    pub(super) fn terminal_demo_toggle(&mut self, open: bool) -> Result<()> {
+        self.terminal_id = open.then_some(0);
+        // 两个方向都从干净画面开始：关掉后是空白的引导（脚本也停，不再往里灌），
+        // 再开时脚本从头放
+        self.terminal.reset();
+        self.terminal_demo = Some(if open {
+            self.set_terminal_hint("调试演示：输出是脚本放的，键入会本地回显")?;
+            crate::biz::terminal_demo::Demo::new()
+        } else {
+            crate::biz::terminal_demo::Demo::default()
+        });
         self.terminal_dirty = true;
         Ok(())
     }
@@ -519,6 +563,19 @@ impl App {
         }
         self.terminal_tick()
     }
+}
+
+/// 演示窗口的分辨率预设（被控端通常会上报的那几档，由高到低）。
+#[cfg(debug_assertions)]
+fn demo_presets() -> Vec<(u32, u32, String)> {
+    [
+        (2560, 1440, "2K"),
+        (1920, 1080, "1080p"),
+        (1280, 720, "720p"),
+    ]
+    .into_iter()
+    .map(|(width, height, label)| (width, height, label.to_string()))
+    .collect()
 }
 
 impl App {
@@ -838,8 +895,17 @@ impl App {
         }
     }
 
-    pub(crate) fn set_terminal_hint(&self, text: &str) -> Result<()> {
-        self.label("TerminalHint", text)
+    /// 终端的轻提示：有话要说才浮出来（打开失败、对方不允许用终端…），到点自己收起。
+    pub(crate) fn set_terminal_hint(&mut self, text: &str) -> Result<()> {
+        self.label("TerminalHint", text)?;
+        let show = !text.is_empty();
+        if show {
+            self.terminal_toast_until = Some(self.tick + TOAST_TICKS);
+            self.play_storyboard("ToastIn")?;
+        } else {
+            self.terminal_toast_until = None;
+        }
+        self.set_visible("TerminalToast", show)
     }
 
     /// 由画面尺寸算出列数行数（面板大小、分隔条、窗口缩放都会走到这里）。
@@ -867,6 +933,13 @@ impl App {
 
     /// 每个 tick：停稳后把新行列数告诉远端；光标闪烁 / 输出变了就重画。
     pub(crate) fn terminal_tick(&mut self) -> Result<()> {
+        if self
+            .terminal_toast_until
+            .is_some_and(|until| self.tick >= until)
+        {
+            self.terminal_toast_until = None;
+            self.set_visible("TerminalToast", false)?;
+        }
         if self.terminal_resize_due.is_some_and(|due| self.tick >= due) {
             self.terminal_resize_due = None;
             let (cols, rows) = self.terminal.size();
@@ -938,13 +1011,20 @@ impl App {
             Canvas::SetLeft(&ime, col as f64 * metrics.cell)?;
             Canvas::SetTop(&ime, row as f64 * metrics.line)?;
         }
-        self.set_visible("TerminalEmpty", self.terminal_id.is_none())?;
+        // 引导只摆在空白画面上：终端结束后输出要留着给人看（退出信息、报错），
+        // 这时不叠引导，重开用面板头部的「+」
+        let guide = self.terminal_id.is_none() && self.terminal.is_blank();
+        self.set_visible("TerminalEmpty", guide)?;
         self.set_visible("TerminalThumb", self.terminal.scroll_range().scrollable > 0)?;
         // 翻看历史时下面又来了新输出：给一个回到底部的入口，不然不知道错过了
-        // 翻看历史时下面来了新输出：给一个回到底部的入口，不然不知道错过了
         self.set_visible("TerminalBehind", self.terminal.has_new_output())?;
-        let close: Control = self.find("TerminalClose")?;
-        close.SetIsEnabled(self.terminal_id.is_some())?;
+        // 「× 结束」只在终端开着时出现；对方不让用终端时两个「打开」入口都灰掉
+        self.set_visible("TerminalClose", self.terminal_id.is_some())?;
+        let allowed = self.terminal_allowed;
+        for name in ["TerminalNew", "TerminalOpenCta"] {
+            let button: Control = self.find(name)?;
+            button.SetIsEnabled(allowed)?;
+        }
         self.sync_terminal_lock()
     }
 
@@ -1081,8 +1161,6 @@ impl App {
                 if *channel == TOOL_CHANNEL_TERMINAL =>
             {
                 self.terminal_allowed = false;
-                let new_terminal: Control = self.find("TerminalNew")?;
-                new_terminal.SetIsEnabled(false)?;
                 return self
                     .set_terminal_hint(&format!("对方不允许使用终端：{}", ui_error.message));
             }

@@ -19,7 +19,7 @@ use super::vt::{
 /// 光标格里的文字颜色（与 macOS 终端主题的 `cursorAccent` 一致）。
 const CURSOR_TEXT: Rgb = DEFAULT_BG;
 /// 输入焦点不在终端上时的光标色：暗一档的方块，只做位置提示。
-const CURSOR_IDLE: Rgb = Rgb(0x25, 0x40, 0x87);
+const CURSOR_IDLE: Rgb = Rgb(0x22, 0x33, 0x66);
 /// 光标闪烁周期（tick）：有按键 / 输出后先常亮一个周期，再按周期明暗交替。
 const BLINK_TICKS: u64 = 12;
 /// 网格尺寸的上下限（与 macOS 端一致；下限放宽，窄面板里不谎报列数）。
@@ -228,6 +228,17 @@ impl Terminal {
         self.screen.full_reset();
         self.top = None;
         self.selection = None;
+    }
+
+    /// 一个字都没写过（缓冲区里的每一行都是空白）。
+    ///
+    /// 面板据此决定摆不摆「打开终端」的引导：终端结束后输出要留着给人看
+    /// （退出信息、报错），这时再叠一块居中的引导只会糊在一起。
+    pub fn is_blank(&self) -> bool {
+        (0..self.screen.line_count()).all(|index| match self.screen.render_row(index) {
+            Some(row) => row.spans.iter().all(|span| span.text.trim().is_empty()),
+            None => true,
+        })
     }
 
     /// 喂一段远端输出。
@@ -1089,5 +1100,22 @@ mod tests {
             "组合字符不占列：x 仍在第 1 列，光标在第 2 列"
         );
         assert_eq!(terminal.screen().render_row(0).unwrap().spans[0].cols(), 2);
+    }
+
+    #[test]
+    fn blank_until_something_visible_is_written() {
+        let mut terminal = Terminal::new(10, 3);
+        assert!(terminal.is_blank(), "新终端一个字都没有");
+        terminal.feed_output(b"\x1b[2J\x1b[H  \t\r\n\n");
+        assert!(terminal.is_blank(), "清屏、换行和空白不算写过字");
+        terminal.feed_output(b"\x1b[2J");
+        assert!(terminal.is_blank(), "清屏把历史一起清掉，又是空白");
+        terminal.feed_output(b"$ ");
+        assert!(!terminal.is_blank(), "有了提示符就不是空白");
+        // 终端结束时远端会补一行结束信息：屏幕上一定留着字，引导不该叠上来
+        terminal.feed_output("\r\n\x1b[90m[终端 #0 已结束]\x1b[0m\r\n".as_bytes());
+        assert!(!terminal.is_blank(), "结束信息还留在屏幕上");
+        terminal.reset();
+        assert!(terminal.is_blank(), "全量复位后回到空白");
     }
 }

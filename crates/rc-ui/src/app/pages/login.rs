@@ -1,14 +1,16 @@
 //! 登录 / 恢复 / 登出 / 服务器设置。
 
 use super::super::{actions::*, App, WithContext};
-use windows::core::Result;
+use windows::core::{Interface, Result};
 
 use std::thread;
 
 use crate::biz::auth::AccountSession;
+use crate::ui::widgets;
 use rc_client_core::server_config;
 use rc_client_core::server_config::ServerStatusSnapshot;
-use windows::UI::Xaml::Controls::{PasswordBox, TextBlock, TextBox};
+use windows::UI::Xaml::Controls::{PasswordBox, TextBox};
+use windows::UI::Xaml::Shapes::{Ellipse, Shape};
 
 /// 给界面操作的错误补上「是哪一步」（见 [`WithContext`]）。
 pub(crate) fn ctx<T>(what: &str, result: windows::core::Result<T>) -> windows::core::Result<T> {
@@ -81,6 +83,7 @@ impl App {
         )?;
         ctx("清空登录提示", self.label("LoginError", ""))?;
         ctx("显示账号", self.label("AccountEmail", &account.email))?;
+        ctx("账号提示", self.tooltip("AccountEmail", &account.email))?;
         // 用登录响应携带的数据即时渲染首屏，REST 全量随后补齐。
         self.devices = account.devices.clone();
         if let Some(id) = account.device_id.clone() {
@@ -170,11 +173,15 @@ impl App {
         Ok(())
     }
 
+    /// 协助页上设备 ID 旁边的一句即时反馈（3 秒后自己消失）。
+    pub(crate) fn show_local_notice(&mut self, text: &str) -> Result<()> {
+        self.local_notice_until = Some(self.tick + 60);
+        self.label("LocalNotice", text)
+    }
+
     pub(crate) fn update_caption(&self) -> Result<()> {
         let origin = settings::format_origin(&self.auth.server_config());
-        self.label("ServerCaption", &origin)?;
-        self.label("ServerOriginCaption", &origin)?;
-        Ok(())
+        self.label("ServerCaption", &origin)
     }
 
     pub(crate) fn apply_status(
@@ -186,34 +193,16 @@ impl App {
             return Ok(());
         }
         let online = snapshot.error_message.is_none() && snapshot.device_id.is_some();
-        // 状态靠文字颜色区分（在线 = 品牌绿）；标题栏里没有单独的状态圆点
-        let color = if online {
-            windows::UI::Color {
-                A: 255,
-                R: 0x22,
-                G: 0xB5,
-                B: 0x73,
-            }
-        } else {
-            windows::UI::Color {
-                A: 255,
-                R: 0x51,
-                G: 0x62,
-                B: 0x78,
-            }
-        };
-        let brush = windows::UI::Xaml::Media::SolidColorBrush::new()?;
-        brush.SetColor(color)?;
-        let status: TextBlock = self.find("StatusText")?;
-        status
-            .SetForeground(&brush)
-            .ctx(|| "设置状态文字颜色".to_string())?;
-        let state_text = match snapshot.error_message.as_deref() {
-            Some(message) => format!("信令：{message}"),
-            None if online => "信令在线".to_string(),
-            None => "信令连接中…".to_string(),
-        };
+        let (dot_hex, state_text) = signal_status_line(snapshot.error_message.as_deref(), online);
         self.label("StatusText", &state_text)?;
+        // 错误信息可能很长，状态行只放得下省略后的那截：完整的挂提示里
+        self.tooltip("StatusText", &state_text)?;
+        if let Some(dot) = self.find_opt::<Ellipse>("StatusDot") {
+            let shape: Shape = dot.cast()?;
+            shape
+                .SetFill(&widgets::solid_brush(dot_hex)?)
+                .ctx(|| "设置状态圆点颜色".to_string())?;
+        }
         self.refresh_devices_on_signal(online, snapshot.device_id.as_deref())?;
         if let Some(id) = snapshot.device_id.as_deref() {
             self.label("LocalIdText", &server_config::format_device_id(id))?;
@@ -231,5 +220,37 @@ impl App {
             }
         }
         Ok(())
+    }
+}
+
+/// 侧栏页脚的连接状态行：圆点颜色（`#RRGGBB`）与文案。
+///
+/// 在线 = 品牌绿；出错 = 警示红；还在连 = 灰。文案与 iOS / macOS 的状态行同一口径。
+fn signal_status_line(error: Option<&str>, online: bool) -> (&'static str, String) {
+    match error {
+        Some(message) => ("#C2403A", format!("信令：{message}")),
+        None if online => ("#22B573", "信令在线".to_string()),
+        None => ("#C2CBD9", "信令连接中…".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::signal_status_line;
+
+    #[test]
+    fn status_line_matches_signal_state() {
+        assert_eq!(
+            signal_status_line(None, true),
+            ("#22B573", "信令在线".into())
+        );
+        assert_eq!(
+            signal_status_line(None, false),
+            ("#C2CBD9", "信令连接中…".into())
+        );
+        assert_eq!(
+            signal_status_line(Some("token 过期"), false),
+            ("#C2403A", "信令：token 过期".into())
+        );
     }
 }

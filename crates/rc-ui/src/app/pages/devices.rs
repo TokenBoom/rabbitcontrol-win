@@ -82,8 +82,16 @@ impl App {
         let host: StackPanel = self.find("DeviceListHost")?;
         let children = panel_children(&host)?;
         children.Clear()?;
-        let empty = self.devices.is_empty();
+        let empty = self.filtered_devices().is_empty();
         self.set_visible("DevicesEmpty", empty)?;
+        // 没有设备 / 搜索没命中，是两种不同的空
+        let (title, hint) = if self.devices.is_empty() {
+            ("账号下暂无设备", "在本机或其他设备登录后，设备会出现在这里")
+        } else {
+            ("没有匹配的设备", "换个关键词，或清空搜索框")
+        };
+        self.label("DevicesEmptyTitle", title)?;
+        self.label("DevicesEmptyHint", hint)?;
         let rows = self.build_device_rows(&local_id)?;
         for row in rows {
             children.Append(&as_ui_element(&row)?)?;
@@ -96,7 +104,7 @@ impl App {
         local_id: &Option<String>,
     ) -> Result<Vec<FrameworkElement>> {
         let mut rows = Vec::new();
-        for device in &self.devices {
+        for device in &self.filtered_devices() {
             let is_local = local_id.as_deref() == Some(device.device_id.as_str());
             let name = self.device_name_of(device);
             let online = self
@@ -177,6 +185,23 @@ impl App {
         Ok(rows)
     }
 
+    /// 按搜索框过滤后的设备（见 [`device_matches`]）。
+    pub(crate) fn filtered_devices(&self) -> Vec<&MyDeviceInfo> {
+        let filter = self.device_filter.trim().to_lowercase();
+        let digits = filter.replace(' ', "");
+        self.devices
+            .iter()
+            .filter(|device| {
+                device_matches(
+                    &self.device_name_of(device),
+                    &device.device_id,
+                    &filter,
+                    &digits,
+                )
+            })
+            .collect()
+    }
+
     pub(crate) fn device_name_of(&self, device: &MyDeviceInfo) -> String {
         let alias = device.alias.trim();
         if !alias.is_empty() {
@@ -189,5 +214,38 @@ impl App {
                 host.to_string()
             }
         }
+    }
+}
+
+/// 设备是否命中搜索关键词：设备名或设备码包含关键词，不分大小写；空关键词全部命中。
+///
+/// `filter` 是小写后的关键词，`digits` 是去掉空格的那一份：设备码在界面上是按
+/// `419 450 905` 分组显示的，照着这个样子输入也要能搜到 `419450905`。
+fn device_matches(name: &str, device_id: &str, filter: &str, digits: &str) -> bool {
+    if filter.is_empty() {
+        return true;
+    }
+    name.to_lowercase().contains(filter) || device_id.contains(digits)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::device_matches;
+
+    fn hits(filter: &str) -> bool {
+        let filter = filter.trim().to_lowercase();
+        device_matches("LUOXIAO-PC", "419450905", &filter, &filter.replace(' ', ""))
+    }
+
+    #[test]
+    fn search_ignores_case_and_code_grouping() {
+        assert!(hits("luoxiao"), "设备名不分大小写");
+        assert!(hits("PC"), "设备名的一部分");
+        assert!(hits("419 450"), "照界面上的分组写法搜设备码");
+        assert!(hits("419450"), "连着写也行");
+        assert!(hits("450 905"), "设备码的任意一段");
+        assert!(hits(""), "空关键词显示全部");
+        assert!(hits("   "), "只有空格也算空");
+        assert!(!hits("zzz"), "不沾边的关键词不命中");
     }
 }

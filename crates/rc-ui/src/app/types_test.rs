@@ -108,6 +108,8 @@ fn compatible_types(tag: &str) -> Option<&'static [&'static str]> {
             "UIElement",
         ],
         "FontIcon" => &["FontIcon", "IconElement", "FrameworkElement", "UIElement"],
+        "MenuFlyout" => &["MenuFlyout", "FlyoutBase", "DependencyObject"],
+        "Storyboard" => &["Storyboard", "Timeline", "DependencyObject"],
         _ => return None,
     };
     Some(table)

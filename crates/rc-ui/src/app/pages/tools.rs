@@ -11,15 +11,19 @@ use super::super::App;
 use rc_tools::file_transfer::TransferDirection;
 use rc_tools::file_transfer::TransferStatus;
 use rc_tools::portmap::PortMapStatus;
-use windows::core::{Interface, Result, HSTRING};
+use windows::core::{Result, HSTRING};
 use windows::UI::Core::{CoreCursor, CoreCursorType, CoreWindow};
 use windows::UI::Xaml::Controls::StackPanel;
 use windows::UI::Xaml::Controls::TextBox;
 use windows::UI::Xaml::FrameworkElement;
 use windows::UI::Xaml::Input::PointerEventHandler;
+use windows::UI::Xaml::Media::Animation::Storyboard;
+use windows::UI::Xaml::RoutedEventHandler;
 use windows::UI::Xaml::UIElement;
 
+use crate::app::{as_ui_element, panel_children};
 use crate::ui::session_window::SessionWindow;
+use crate::ui::widgets;
 
 /// 面板还没排过版（刚打开会话窗口）时，开终端用的行列数：与 macOS 端一致。
 pub(crate) const FALLBACK_COLS: usize = 80;
@@ -29,9 +33,6 @@ pub(crate) const DEFAULT_TOOL_WIDTHS: [f64; 3] = [600.0, 340.0, 340.0];
 const MIN_TOOL_WIDTH: f64 = 280.0;
 /// 无论面板拖多宽，都给远程画面留这么多。
 const MIN_STAGE_WIDTH: f64 = 360.0;
-/// 终端开着时常驻在画面下方的一行操作提示。
-const TERMINAL_HINT: &str = "拖动选择文字；Ctrl+Shift+C 复制、Ctrl+Shift+V 粘贴；滚轮翻看历史";
-
 /// 换掉窗口里的鼠标指针形状。
 fn set_cursor(kind: CoreCursorType) -> Result<()> {
     CoreWindow::GetForCurrentThread()?.SetPointerCursor(CoreCursor::CreateCursor(kind, 1)?)
@@ -43,8 +44,12 @@ impl App {
         self.tool_panel_visible = !self.tool_panel_visible;
         self.set_visible("ToolPanel", self.tool_panel_visible)?;
         self.set_visible("ToolSplitter", self.tool_panel_visible)?;
+        // 面板开关是切换按钮：选中态 = 面板开着
+        self.set_checked_named("ToolToggle", self.tool_panel_visible)?;
         if self.tool_panel_visible {
             self.apply_tool_width()?;
+            self.sync_tool_actions()?;
+            self.play_storyboard("PanelIn")?;
             self.terminal_dirty = true;
         }
         Ok(())
@@ -52,6 +57,7 @@ impl App {
 
     /// 工具 tab 切换（0 终端 / 1 文件 / 2 端口）。
     pub(crate) fn on_tool_tab(&mut self, tab: u8) -> Result<()> {
+        let previous = self.tool_tab;
         self.tool_tab = tab;
         self.set_visible("TerminalPane", tab == 0)?;
         self.set_visible("FilesPane", tab == 1)?;
@@ -60,12 +66,31 @@ impl App {
         self.set_checked_named("ToolTabFiles", tab == 1)?;
         self.set_checked_named("ToolTabPortmap", tab == 2)?;
         self.apply_tool_width()?;
+        self.sync_tool_actions()?;
+        if previous != tab {
+            // 换了一屏内容：轻微淡入，视线跟得上
+            self.play_storyboard("PaneIn")?;
+        }
         match tab {
             0 => self.terminal_dirty = true,
             1 => self.render_transfers()?,
             _ => self.render_portmaps()?,
         }
         Ok(())
+    }
+
+    /// 面板头部右侧的操作只留当前 tab 用得上的那几个（终端：＋ / ×；文件：↑ ↓）。
+    fn sync_tool_actions(&self) -> Result<()> {
+        self.set_visible("TerminalActions", self.tool_tab == 0)?;
+        self.set_visible("FileActions", self.tool_tab == 1)
+    }
+
+    /// 放一段写在会话窗口 XAML 里的动画（按名字取）。
+    pub(crate) fn play_storyboard(&self, name: &str) -> Result<()> {
+        match self.find_opt::<Storyboard>(name) {
+            Some(storyboard) => storyboard.Begin(),
+            None => Ok(()),
+        }
     }
 
     /// 点了已经选中的 tab：ToggleButton 会把它取消选中，可面板其实还停在这个 tab 上——把选中态补回来。
@@ -151,11 +176,15 @@ impl App {
                 Ok(())
             }
         }))?;
-        // 鼠标移到分隔条上换成左右箭头，离开再换回来
+        // 鼠标移到分隔条上换成左右箭头并亮起蓝线，离开再换回来
+        let glow: UIElement = self.find("ToolSplitterGlow")?;
+        let glow_in = glow.clone();
         splitter.PointerEntered(PointerEventHandler::new(move |_, _| {
+            let _ = glow_in.SetOpacity(1.0);
             set_cursor(CoreCursorType::SizeWestEast)
         }))?;
         splitter.PointerExited(PointerEventHandler::new(move |_, _| {
+            let _ = glow.SetOpacity(0.0);
             set_cursor(CoreCursorType::Arrow)
         }))?;
         Ok(())
@@ -199,9 +228,15 @@ impl App {
     /// 打开新终端：按画面实际放得下的行列数开（面板还没排过版就用默认值）。
     pub(crate) fn on_terminal_new(&mut self) -> Result<()> {
         let Some(active) = self.session.as_ref() else {
+            #[cfg(debug_assertions)]
+            if self.in_terminal_demo() {
+                return self.terminal_demo_toggle(true);
+            }
             return self.set_terminal_hint("未连接会话。");
         };
-        if active.watch_only {
+        // 把要用的值先取出来：后面要可变借用 self（提示、重置画面）
+        let (watch_only, tools) = (active.watch_only, active.handle.tools());
+        if watch_only {
             return self.set_terminal_hint("只读观看模式下不能使用终端。");
         }
         if !self.terminal_allowed {
@@ -217,12 +252,7 @@ impl App {
         self.terminal_dirty = true;
         self.set_terminal_hint("正在打开终端…")?;
         let dimension = |value: usize| u16::try_from(value).unwrap_or(u16::MAX);
-        match active.handle.tools().terminal_open_with_options(
-            dimension(cols),
-            dimension(rows),
-            None,
-            true,
-        ) {
+        match tools.terminal_open_with_options(dimension(cols), dimension(rows), None, true) {
             Ok(_) => Ok(()),
             Err(err) => self.set_terminal_hint(&format!("打开失败：{err}")),
         }
@@ -233,16 +263,21 @@ impl App {
         let Some(term_id) = self.terminal_id else {
             return Ok(());
         };
-        if let Some(active) = self.session.as_ref() {
-            if let Err(err) = active.handle.tools().terminal_close(term_id) {
-                return self.set_terminal_hint(&format!("结束失败：{err}"));
+        let Some(active) = self.session.as_ref() else {
+            #[cfg(debug_assertions)]
+            if self.in_terminal_demo() {
+                return self.terminal_demo_toggle(false);
             }
+            return Ok(());
+        };
+        if let Err(err) = active.handle.tools().terminal_close(term_id) {
+            return self.set_terminal_hint(&format!("结束失败：{err}"));
         }
         Ok(())
     }
 
     /// 把终端当前的行列数告诉远端（画面尺寸变了 / 刚开好或附着上终端时）。
-    fn notify_terminal_resize(&self) -> Result<()> {
+    fn notify_terminal_resize(&mut self) -> Result<()> {
         let (Some(term_id), Some(active)) = (self.terminal_id, self.session.as_ref()) else {
             return Ok(());
         };
@@ -319,7 +354,6 @@ impl App {
     fn open_terminal(&mut self, term_id: u32) {
         self.terminal_id = Some(term_id);
         self.terminal_dirty = true;
-        let _ = self.set_terminal_hint(TERMINAL_HINT);
         let _ = self.notify_terminal_resize();
     }
 
@@ -498,148 +532,140 @@ impl App {
         Ok(())
     }
 
-    /// 传输列表渲染（简单行：名称 进度 状态 + 取消按钮）。
+    /// 传输队列：每条一张卡片（方向 / 文件名 / 进度 / 状态），传输中的可以取消。
     pub(crate) fn render_transfers(&mut self) -> Result<()> {
-        use windows::UI::Xaml::Controls;
         let Some(panel) = self.find_opt::<StackPanel>("TransferList") else {
             return Ok(());
         };
-        let children = {
-            let as_panel: Controls::Panel = panel.cast()?;
-            as_panel.Children()?
-        };
-        while children.Size()? > 0 {
-            children.RemoveAtEnd()?;
-        }
+        let children = panel_children(&panel)?;
+        children.Clear()?;
         let items = if let Some(active) = self.session.as_ref() {
             active.handle.tools().file_list_transfers()
         } else {
             self.transfers.clone()
         };
+        if items.is_empty() {
+            children.Append(&as_ui_element(&widgets::empty_hint(
+                "还没有传输任务",
+                "用面板右上角的 ↑ 上传文件、↓ 下载远端文件",
+            )?)?)?;
+            return Ok(());
+        }
         for item in items.iter().rev().take(30) {
-            let pct = if item.total_bytes > 0 {
-                (item.done_bytes as f64 / item.total_bytes as f64 * 100.0).round() as u32
+            let upload = matches!(item.direction, TransferDirection::Upload);
+            let percent = if item.total_bytes > 0 {
+                (item.done_bytes as f64 / item.total_bytes as f64 * 100.0)
+                    .round()
+                    .clamp(0.0, 100.0)
             } else if item.status == TransferStatus::Done {
-                100
+                100.0
             } else {
-                0
+                0.0
             };
-            let status = match item.status {
-                TransferStatus::Active => format!("传输中 {pct}%"),
-                TransferStatus::Done => "完成".to_string(),
-                TransferStatus::Failed => format!(
-                    "失败：{}",
-                    item.error.clone().unwrap_or_else(|| "未知".into())
+            let (state, status) = match item.status {
+                TransferStatus::Active => (
+                    widgets::TransferRowState::Active,
+                    format!(
+                        "传输中 · {} / {}",
+                        fmt_bytes(item.done_bytes),
+                        fmt_bytes(item.total_bytes)
+                    ),
                 ),
-                TransferStatus::Cancelled => "已取消".to_string(),
+                TransferStatus::Done => (
+                    widgets::TransferRowState::Done,
+                    format!(
+                        "已完成 · {}",
+                        fmt_bytes(item.done_bytes.max(item.total_bytes))
+                    ),
+                ),
+                TransferStatus::Failed => (
+                    widgets::TransferRowState::Failed,
+                    format!(
+                        "失败 · {}",
+                        item.error.clone().unwrap_or_else(|| "未知原因".to_string())
+                    ),
+                ),
+                TransferStatus::Cancelled => (
+                    widgets::TransferRowState::Cancelled,
+                    format!("已取消 · {}", fmt_bytes(item.done_bytes)),
+                ),
             };
-            let dir = if matches!(item.direction, TransferDirection::Upload) {
-                "↑"
-            } else {
-                "↓"
-            };
-            let row = format!("{dir} {} · {}", item.name, status);
-            let text = Controls::TextBlock::new()?;
-            text.SetText(HSTRING::from(&row))?;
-            text.SetFontSize(12f64)?;
-            children.Append(&text)?;
-            if item.status == TransferStatus::Active {
-                let cancel = Controls::Button::new()?;
-                cancel
-                    .cast::<Controls::ContentControl>()?
-                    .SetContent(content_object("取消")?)?;
-                cancel.cast::<Controls::Control>()?.SetFontSize(11f64)?;
-                children.Append(&cancel)?;
+            let (row, cancel) = widgets::transfer_row(upload, &item.name, &status, percent, state)?;
+            if let Some(cancel) = cancel {
                 let sender = self.sender();
                 let id = item.id;
-                let btn: windows::UI::Xaml::Controls::Primitives::ButtonBase = cancel.cast()?;
-                btn.Click(windows::UI::Xaml::RoutedEventHandler::new(move |_, _| {
+                cancel.Click(RoutedEventHandler::new(move |_, _| {
                     sender.send(Event::Click(Action::TransferCancel(id)));
                     Ok(())
                 }))?;
             }
+            children.Append(&as_ui_element(&row)?)?;
         }
         Ok(())
     }
 
-    /// 端口映射列表渲染。
+    /// 端口映射列表：每条一张卡片（名称 / 目标 / 收发量 / 状态），可暂停 / 启用、删除。
     pub(crate) fn render_portmaps(&mut self) -> Result<()> {
-        use windows::UI::Xaml::Controls;
         let Some(panel) = self.find_opt::<StackPanel>("PortmapList") else {
             return Ok(());
         };
-        let children = {
-            let as_panel: Controls::Panel = panel.cast()?;
-            as_panel.Children()?
-        };
-        while children.Size()? > 0 {
-            children.RemoveAtEnd()?;
-        }
+        let children = panel_children(&panel)?;
+        children.Clear()?;
         let rules = if let Some(active) = self.session.as_ref() {
             active.handle.tools().portmap_list()
         } else {
             Vec::new()
         };
         if rules.is_empty() {
-            let text = Controls::TextBlock::new()?;
-            text.SetText(HSTRING::from("暂无映射规则"))?;
-            text.SetFontSize(12f64)?;
-            children.Append(&text)?;
+            children.Append(&as_ui_element(&widgets::empty_hint(
+                "还没有映射规则",
+                "填好上面的表单，点「添加映射」",
+            )?)?)?;
             return Ok(());
         }
         for rule in &rules {
-            let status = match rule.status {
-                PortMapStatus::Ok => "运行中",
-                PortMapStatus::Fail => "错误",
-                PortMapStatus::Pending => "暂停",
+            let name = if rule.name.trim().is_empty() {
+                format!("本地端口 {}", rule.local_port)
+            } else {
+                rule.name.clone()
             };
-            let row = format!(
-                "{} · :{} → {}:{} · {} · 收 {} / 发 {}",
-                rule.name,
-                rule.local_port,
+            let detail = format!(
+                "{}:{} · 收 {} · 发 {}",
                 rule.target_addr,
                 rule.target_port,
-                status,
                 fmt_bytes(rule.bytes_rx),
-                fmt_bytes(rule.bytes_tx),
+                fmt_bytes(rule.bytes_tx)
             );
-            let text = Controls::TextBlock::new()?;
-            text.SetText(HSTRING::from(&row))?;
-            text.SetFontSize(12f64)?;
-            children.Append(&text)?;
-            // 开关 + 删除
-            let toggle = Controls::Button::new()?;
-            toggle
-                .cast::<Controls::ContentControl>()?
-                .SetContent(content_object(if rule.enabled {
-                    "暂停"
-                } else {
-                    "启用"
-                })?)?;
-            toggle.cast::<Controls::Control>()?.SetFontSize(11f64)?;
-            children.Append(&toggle)?;
-            let del = Controls::Button::new()?;
-            del.cast::<Controls::ContentControl>()?
-                .SetContent(content_object("删除")?)?;
-            del.cast::<Controls::Control>()?.SetFontSize(11f64)?;
-            children.Append(&del)?;
-            let sender = self.sender();
-            let (id, enable) = (rule.id, !rule.enabled);
-            let toggle_btn: windows::UI::Xaml::Controls::Primitives::ButtonBase = toggle.cast()?;
-            toggle_btn.Click(windows::UI::Xaml::RoutedEventHandler::new(move |_, _| {
-                sender.send(Event::Click(Action::PortmapRule(
-                    id,
-                    if enable { 1 } else { 2 },
-                )));
-                Ok(())
-            }))?;
-            let sender = self.sender();
-            let id = rule.id;
-            let del_btn: windows::UI::Xaml::Controls::Primitives::ButtonBase = del.cast()?;
-            del_btn.Click(windows::UI::Xaml::RoutedEventHandler::new(move |_, _| {
-                sender.send(Event::Click(Action::PortmapRule(id, 0)));
-                Ok(())
-            }))?;
+            let state = if !rule.enabled {
+                widgets::PortRowState::Paused
+            } else {
+                match rule.status {
+                    PortMapStatus::Fail => widgets::PortRowState::Failed,
+                    PortMapStatus::Ok | PortMapStatus::Pending => widgets::PortRowState::Running,
+                }
+            };
+            let (row, toggle, delete) = widgets::portmap_row(&name, &detail, state)?;
+            {
+                // 没启用就是「启用」，否则是「暂停」
+                let sender = self.sender();
+                let (id, enable) = (rule.id, !rule.enabled);
+                toggle.Click(RoutedEventHandler::new(move |_, _| {
+                    sender.send(Event::Click(Action::PortmapRule(
+                        id,
+                        if enable { 1 } else { 2 },
+                    )));
+                    Ok(())
+                }))?;
+            }
+            {
+                let sender = self.sender();
+                let id = rule.id;
+                delete.Click(RoutedEventHandler::new(move |_, _| {
+                    sender.send(Event::Click(Action::PortmapRule(id, 0)));
+                    Ok(())
+                }))?;
+            }
+            children.Append(&as_ui_element(&row)?)?;
         }
         Ok(())
     }
@@ -674,11 +700,6 @@ impl App {
             let _ = self.set_terminal_hint("");
         }
     }
-}
-
-/// HSTRING → IInspectable（0.37 SetContent 参数要求）。
-fn content_object(s: &str) -> windows::core::Result<windows::core::IInspectable> {
-    windows::Foundation::PropertyValue::CreateString(HSTRING::from(s))
 }
 
 /// 字节数人类可读。

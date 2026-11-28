@@ -275,6 +275,233 @@ pub fn fps_candidates(max_fps: u32) -> Vec<u32> {
         .collect()
 }
 
+/// 码率档位（与设置页的「画质偏好」共用）：自适应 / 8M / 14M / 30M。
+pub const BITRATE_PRESETS: [&str; 4] = ["auto", "8m", "14m", "30m"];
+/// 各码率档位下发的比特率；`0` = 自适应，不下发。
+pub const BITRATE_STEPS_BPS: [u32; 4] = [0, 8_000_000, 14_000_000, 30_000_000];
+
+/// 会话窗口「显示与画质」菜单里的哪一组。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamSetting {
+    /// 分辨率。
+    Resolution,
+    /// 帧率。
+    Fps,
+    /// 码率档位。
+    Bitrate,
+    /// 编解码器。
+    Codec,
+    /// 鼠标模式。
+    Mouse,
+    /// 显示器。
+    Display,
+}
+
+impl StreamSetting {
+    /// 菜单里的标题。
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Resolution => "分辨率",
+            Self::Fps => "帧率",
+            Self::Bitrate => "码率",
+            Self::Codec => "编解码",
+            Self::Mouse => "鼠标",
+            Self::Display => "显示器",
+        }
+    }
+
+    /// 菜单里的图标（Segoe MDL2 Assets 码点）。
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::Resolution => "\u{E772}",
+            Self::Fps => "\u{E916}",
+            Self::Bitrate => "\u{E945}",
+            Self::Codec => "\u{E714}",
+            Self::Mouse => "\u{E962}",
+            Self::Display => "\u{E7F4}",
+        }
+    }
+}
+
+/// 「显示与画质」菜单里的一组选项。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingGroup {
+    /// 哪一组。
+    pub setting: StreamSetting,
+    /// 选项文案；可调的组第 0 项一律是「跟随当前」（保持被控端现在的值）。
+    pub options: Vec<String>,
+    /// 当前生效项的下标。
+    pub selected: usize,
+    /// 为假时整组不可选（对端没上报这项能力）。
+    pub enabled: bool,
+}
+
+/// 由被控端能力与当前生效值，算出菜单的各组选项（纯函数，菜单与勾都从它来）。
+pub fn setting_groups(
+    quality: &QualityState,
+    fps_options: &[u32],
+    bitrate_preset: &str,
+) -> Vec<SettingGroup> {
+    let mut resolutions = vec!["跟随当前".to_string()];
+    resolutions.extend(quality.presets.iter().map(|(_, _, label)| label.clone()));
+    let current_resolution = quality
+        .presets
+        .iter()
+        .position(|(w, h, _)| *w == quality.width && *h == quality.height)
+        .map_or(0, |index| index + 1);
+
+    let mut frame_rates = vec!["跟随当前".to_string()];
+    frame_rates.extend(fps_options.iter().map(|fps| format!("{fps} fps")));
+    let current_fps = fps_options
+        .iter()
+        .position(|fps| *fps == quality.fps)
+        .map_or(0, |index| index + 1);
+
+    let codec = if quality.supported_codecs.is_empty() {
+        SettingGroup {
+            setting: StreamSetting::Codec,
+            options: vec!["自动".to_string()],
+            selected: 0,
+            enabled: false,
+        }
+    } else {
+        let mut options = vec!["跟随当前".to_string()];
+        options.extend(
+            quality
+                .supported_codecs
+                .iter()
+                .map(|codec| codec_label(codec)),
+        );
+        SettingGroup {
+            setting: StreamSetting::Codec,
+            selected: quality
+                .codec
+                .as_deref()
+                .and_then(|codec| quality.supported_codecs.iter().position(|s| s == codec))
+                .map_or(0, |index| index + 1),
+            options,
+            enabled: true,
+        }
+    };
+
+    vec![
+        SettingGroup {
+            setting: StreamSetting::Resolution,
+            selected: current_resolution,
+            options: resolutions,
+            enabled: true,
+        },
+        SettingGroup {
+            setting: StreamSetting::Fps,
+            selected: current_fps,
+            options: frame_rates,
+            enabled: true,
+        },
+        SettingGroup {
+            setting: StreamSetting::Bitrate,
+            selected: BITRATE_PRESETS
+                .iter()
+                .position(|preset| *preset == bitrate_preset)
+                .unwrap_or(0),
+            options: ["自适应", "8 Mbps", "14 Mbps", "30 Mbps"]
+                .iter()
+                .map(|label| label.to_string())
+                .collect(),
+            enabled: true,
+        },
+        codec,
+        SettingGroup {
+            setting: StreamSetting::Mouse,
+            selected: MOUSE_MODES
+                .iter()
+                .position(|(mode, _)| Some(*mode) == quality.mouse_mode.as_deref())
+                .unwrap_or(0),
+            options: MOUSE_MODES
+                .iter()
+                .map(|(_, label)| label.to_string())
+                .collect(),
+            enabled: true,
+        },
+        SettingGroup {
+            setting: StreamSetting::Display,
+            selected: quality
+                .displays
+                .iter()
+                .position(|(id, _)| *id == quality.active_display_id)
+                .unwrap_or(0),
+            options: quality
+                .displays
+                .iter()
+                .map(|(_, name)| name.clone())
+                .collect(),
+            enabled: !quality.displays.is_empty(),
+        },
+    ]
+}
+
+fn codec_label(codec: &str) -> String {
+    match codec {
+        "hevc" => "HEVC".to_string(),
+        "h264" => "H.264".to_string(),
+        other => other.to_uppercase(),
+    }
+}
+
+/// 分辨率、帧率两组的选中下标 → 流参数请求（下标 0 = 保持当前）。
+pub fn stream_request(
+    resolution: usize,
+    fps: usize,
+    quality: &QualityState,
+    fps_options: &[u32],
+) -> (u32, u32, u32) {
+    let (width, height) = resolution
+        .checked_sub(1)
+        .and_then(|index| quality.presets.get(index))
+        .map_or((0, 0), |(width, height, _)| (*width, *height));
+    let fps = fps
+        .checked_sub(1)
+        .and_then(|index| fps_options.get(index).copied())
+        .unwrap_or(0);
+    (width, height, fps)
+}
+
+/// 请求与当前生效值一致：不用下发（菜单回填触发的、或用户选了同一项）。
+pub fn stream_request_unchanged(request: (u32, u32, u32), quality: &QualityState) -> bool {
+    let (width, height, fps) = request;
+    let size_same = width == 0 || (width == quality.width && height == quality.height);
+    let fps_same = fps == 0 || fps == quality.fps;
+    size_same && fps_same
+}
+
+/// 分辨率的简写（主流写法）：`4K` / `2K` / `1080p` / `720p`；对不上就用 `宽×高`。
+pub fn short_size(width: u32, height: u32) -> String {
+    match (width, height) {
+        (3840, 2160) => "4K".to_string(),
+        (2560, 1440) => "2K".to_string(),
+        (_, 1080) => "1080p".to_string(),
+        (_, 720) => "720p".to_string(),
+        _ => format!("{width}×{height}"),
+    }
+}
+
+/// 状态条上的连接信息：`1080p · 60 fps · P2P 直连`。
+pub fn session_summary(
+    width: u32,
+    height: u32,
+    fps: u32,
+    transport: &str,
+    watch_only: bool,
+) -> String {
+    let mut parts = vec![short_size(width, height), format!("{fps} fps")];
+    if !transport.is_empty() {
+        parts.push(transport.to_string());
+    }
+    if watch_only {
+        parts.push("仅观看".to_string());
+    }
+    parts.join(" · ")
+}
+
 /// HUD 快照 → 两行等宽文本（纯函数可单测；core 契约：UI 只格式化）。
 ///
 /// 形如：
@@ -425,6 +652,108 @@ mod tests {
         assert_eq!(bitrate_preset_to_bps("30m"), 30_000_000);
         assert_eq!(bitrate_preset_to_bps("auto"), 14_000_000);
         assert_eq!(bitrate_preset_to_bps("unknown"), 14_000_000);
+    }
+
+    fn sample_quality() -> QualityState {
+        QualityState {
+            presets: vec![
+                (3840, 2160, "4K".to_string()),
+                (1920, 1080, "1080P".to_string()),
+            ],
+            width: 1920,
+            height: 1080,
+            fps: 60,
+            max_fps: 120,
+            codec: Some("h264".to_string()),
+            supported_codecs: vec!["hevc".to_string(), "h264".to_string()],
+            mouse_mode: Some("remote".to_string()),
+            displays: vec![(1, "显示器 1".to_string()), (2, "显示器 2".to_string())],
+            active_display_id: 2,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn setting_groups_follow_the_effective_values() {
+        let groups = setting_groups(&sample_quality(), &[30, 60, 120], "14m");
+        let group = |setting| {
+            groups
+                .iter()
+                .find(|g| g.setting == setting)
+                .expect("组存在")
+        };
+        assert_eq!(
+            group(StreamSetting::Resolution).options,
+            ["跟随当前", "4K", "1080P"]
+        );
+        assert_eq!(group(StreamSetting::Resolution).selected, 2);
+        assert_eq!(
+            group(StreamSetting::Fps).options,
+            ["跟随当前", "30 fps", "60 fps", "120 fps"]
+        );
+        assert_eq!(group(StreamSetting::Fps).selected, 2);
+        assert_eq!(
+            group(StreamSetting::Bitrate).options,
+            ["自适应", "8 Mbps", "14 Mbps", "30 Mbps"]
+        );
+        assert_eq!(group(StreamSetting::Bitrate).selected, 2);
+        assert_eq!(
+            group(StreamSetting::Codec).options,
+            ["跟随当前", "HEVC", "H.264"]
+        );
+        assert_eq!(group(StreamSetting::Codec).selected, 2);
+        assert_eq!(
+            group(StreamSetting::Mouse).options,
+            ["智能跟踪", "远程光标", "本地光标"]
+        );
+        assert_eq!(group(StreamSetting::Mouse).selected, 1);
+        assert_eq!(
+            group(StreamSetting::Display).options,
+            ["显示器 1", "显示器 2"]
+        );
+        assert_eq!(group(StreamSetting::Display).selected, 1);
+        // 对端没上报编解码：只剩「自动」且不可选
+        let state = QualityState {
+            supported_codecs: Vec::new(),
+            ..sample_quality()
+        };
+        let codec = setting_groups(&state, &[60], "auto")
+            .into_iter()
+            .find(|g| g.setting == StreamSetting::Codec)
+            .expect("编解码组");
+        assert_eq!(codec.options, ["自动"]);
+        assert!(!codec.enabled);
+    }
+
+    #[test]
+    fn stream_requests_follow_menu_indexes() {
+        let state = sample_quality();
+        let options = [30u32, 60, 120];
+        assert_eq!(stream_request(1, 3, &state, &options), (3840, 2160, 120));
+        assert_eq!(stream_request(2, 1, &state, &options), (1920, 1080, 30));
+        assert_eq!(stream_request(0, 0, &state, &options), (0, 0, 0));
+        // 与生效值一致 → 不下发
+        assert!(stream_request_unchanged((0, 0, 0), &state));
+        assert!(stream_request_unchanged((1920, 1080, 0), &state));
+        assert!(stream_request_unchanged((1920, 1080, 60), &state));
+        assert!(!stream_request_unchanged((3840, 2160, 0), &state));
+        assert!(!stream_request_unchanged((1920, 1080, 120), &state));
+    }
+
+    #[test]
+    fn session_summary_uses_short_names() {
+        assert_eq!(
+            session_summary(1920, 1080, 60, "P2P 直连", false),
+            "1080p · 60 fps · P2P 直连"
+        );
+        assert_eq!(
+            session_summary(3840, 2160, 30, "", true),
+            "4K · 30 fps · 仅观看"
+        );
+        assert_eq!(
+            session_summary(1920, 1200, 60, "", false),
+            "1920×1200 · 60 fps"
+        );
     }
 
     #[test]

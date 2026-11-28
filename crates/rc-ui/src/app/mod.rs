@@ -12,7 +12,7 @@ use std::thread;
 
 use rc_client_core::app_prefs::{self, AppPrefs};
 use rc_client_core::auth_client::MyDeviceInfo;
-use rc_client_core::server_config::{self};
+
 use windows::{
     core::{Interface, Result, HSTRING},
     System::VirtualKey,
@@ -29,7 +29,7 @@ use windows::{
 };
 
 use rc_client_core::session_bridge::{SessionHandle, SessionUpdate};
-use windows::UI::Xaml::Controls::SwapChainPanel;
+use windows::UI::Xaml::Controls::{SwapChainPanel, ToolTipService};
 use windows::UI::Xaml::Input::PointerEventHandler;
 
 /// 全局禁用控件清单（busy 态）；缺失的条目自动跳过。
@@ -93,7 +93,11 @@ pub struct App {
     host_verify_custom: Option<bool>,
     quality: sess::QualityState,
     quality_fps_options: Vec<u32>,
+    /// 「显示与画质」菜单的签名（候选变了才重建菜单项）。
     quality_sig: String,
+    /// 「显示与画质」菜单：每组的选项与当前生效项；菜单项元素留着，用来打勾。
+    quality_menu: Vec<sess::SettingGroup>,
+    quality_items: Vec<Vec<windows::UI::Xaml::Controls::MenuFlyoutItem>>,
     /// M3.7 自动重连：待触发的 tick / 目标设备 / 已尝试次数。
     pending_reconnect_tick: Option<u64>,
     reconnect_target: Option<String>,
@@ -122,6 +126,12 @@ pub struct App {
     terminal_dirty: bool,
     /// 画面尺寸停稳后要把新行列数告诉远端的 tick。
     terminal_resize_due: Option<u64>,
+    /// 终端轻提示到点收起的 tick。
+    terminal_toast_until: Option<u64>,
+    /// 设备搜索框的内容（小写），空 = 不过滤。
+    device_filter: String,
+    /// 协助页上「已复制」这类即时提示到点清掉的 tick。
+    local_notice_until: Option<u64>,
     /// 工具面板各 tab 的宽度（逻辑像素）；拖分隔条时改。
     tool_widths: [f64; 3],
     /// 分隔条拖动中：按下时的面板宽度。
@@ -238,6 +248,8 @@ impl App {
             quality: sess::QualityState::default(),
             quality_fps_options: Vec::new(),
             quality_sig: String::new(),
+            quality_menu: Vec::new(),
+            quality_items: Vec::new(),
             pending_reconnect_tick: None,
             reconnect_target: None,
             reconnect_attempts: 0,
@@ -260,6 +272,9 @@ impl App {
             terminal_id: None,
             terminal_dirty: false,
             terminal_resize_due: None,
+            terminal_toast_until: None,
+            device_filter: String::new(),
+            local_notice_until: None,
             tool_widths: pages::tools::DEFAULT_TOOL_WIDTHS,
             tool_splitter_drag: None,
             #[cfg(debug_assertions)]
@@ -367,7 +382,8 @@ impl App {
         self.click("RefreshDevices", Action::RefreshDevices)?;
         // 开始协助
         self.click("CopyIdButton", Action::CopyId)?;
-        self.click("ToggleCodeButton", Action::ToggleCodeVisibility)?;
+        // 协助页上刷新临时验证码（与设置页的按钮是同一件事）
+        self.click("AssistRotateCode", Action::HostRotateCode)?;
         self.click("ConnectPeerButton", Action::ConnectSubmit)?;
         self.click("PeerAdvancedButton", Action::AdvancedToggle)?;
         self.click("HistoryTabRecent", Action::HistoryTabFav(false))?;
@@ -411,6 +427,19 @@ impl App {
                 }
                 Ok(())
             }))?;
+        }
+        {
+            // 设备搜索框：边打边过滤
+            let box_: TextBox = self.find("DeviceSearch")?;
+            let sender = self.sender();
+            let watched = box_.clone();
+            box_.TextChanged(windows::UI::Xaml::Controls::TextChangedEventHandler::new(
+                move |_, _| {
+                    let text = watched.Text().unwrap_or_default().to_string();
+                    sender.send(Event::Click(Action::DeviceSearch(text)));
+                    Ok(())
+                },
+            ))?;
         }
         // 设置
         self.settings_tab("TabGeneral", 0)?;
@@ -469,10 +498,10 @@ impl App {
             .as_ref()
             .map(|h| h.hwnd())
             .ok_or_else(windows::core::Error::from_win32)?;
-        // 会话工具条（元素位于会话窗口根，find() 自动路由）
+        // 顶部状态条（元素位于会话窗口根，find() 自动路由）。
+        // 「显示与画质」自己带弹出菜单（QualityMenu），菜单项在 sync_quality_menu 里建，不用接 Click
         self.click("SessionDisconnect", Action::SessionDisconnect)?;
         self.click("SessionReconnect", Action::SessionReconnect)?;
-        self.click("SessionQuality", Action::SessionQualityToggle)?;
         self.click("SessionFullscreen", Action::SessionFullscreen)?;
         // M4 工具面板
         self.click("ToolToggle", Action::ToolToggle)?;
@@ -499,6 +528,8 @@ impl App {
             }))?;
         }
         self.click("TerminalNew", Action::TerminalNew)?;
+        // 空态里的引导按钮与头部的「＋」是同一件事
+        self.click("TerminalOpenCta", Action::TerminalNew)?;
         self.click("TerminalClose", Action::TerminalClose)?;
         self.click("TerminalLockSubmit", Action::TerminalLockSubmit)?;
         self.click("TerminalBehind", Action::TerminalToBottom)?;
@@ -509,23 +540,6 @@ impl App {
         self.click("PromptCancel", Action::PromptCancel)?;
         self.wire_terminal()?;
         self.wire_tool_splitter()?;
-        // M3.2 画质工具条：任一下拉变更 → 统一预钳制后下发
-        for name in [
-            "StreamResolutionBox",
-            "StreamFpsBox",
-            "StreamBitrateBox",
-            "StreamCodecBox",
-        ] {
-            let sender = self.sender();
-            let combo: windows::UI::Xaml::Controls::Primitives::Selector = self.find(name)?;
-            combo.SelectionChanged(
-                windows::UI::Xaml::Controls::SelectionChangedEventHandler::new(move |_, _| {
-                    let sender = sender.clone();
-                    sender.send(Event::Click(Action::StreamQualityChanged));
-                    Ok(())
-                }),
-            )?;
-        }
         // 会话舞台尺寸变化 → StageRect（渲染器 letterbox 基准，物理像素）
         {
             let sender = self.sender();
@@ -544,32 +558,6 @@ impl App {
                     Ok(())
                 },
             ))?;
-        }
-        // M3.3 鼠标模式下拉
-        {
-            let sender = self.sender();
-            let combo: windows::UI::Xaml::Controls::Primitives::Selector =
-                self.find("StreamMouseBox")?;
-            combo.SelectionChanged(
-                windows::UI::Xaml::Controls::SelectionChangedEventHandler::new(move |_, _| {
-                    let sender = sender.clone();
-                    sender.send(Event::Click(Action::MouseModeChanged));
-                    Ok(())
-                }),
-            )?;
-        }
-        // M3.8 显示器下拉
-        {
-            let sender = self.sender();
-            let combo: windows::UI::Xaml::Controls::Primitives::Selector =
-                self.find("StreamDisplayBox")?;
-            combo.SelectionChanged(
-                windows::UI::Xaml::Controls::SelectionChangedEventHandler::new(move |_, _| {
-                    let sender = sender.clone();
-                    sender.send(Event::Click(Action::DisplayChanged));
-                    Ok(())
-                }),
-            )?;
         }
         // 会话舞台输入（M2：鼠标 + 滚轮 + 键盘；watch_only 时不发送）
         {
@@ -806,6 +794,16 @@ impl App {
                 Visibility::Collapsed
             })
             .ctx(|| format!("设置 {name} {}", if visible { "可见" } else { "折叠" }))
+    }
+
+    /// 给元素挂悬停提示：给会省略的文字（长邮箱、长错误信息）留一个看全的地方。
+    fn tooltip(&self, name: &str, text: &str) -> Result<()> {
+        let element: UIElement = self.find(name)?;
+        ToolTipService::SetToolTip(
+            &element,
+            windows::Foundation::PropertyValue::CreateString(HSTRING::from(text))?,
+        )
+        .ctx(|| format!("设置 {name} 提示"))
     }
 
     fn set_busy(&mut self, busy: bool) -> Result<()> {
@@ -1064,7 +1062,7 @@ impl App {
                 }
                 rc_client_core::host_bridge::HostUpdate::Stopped => {
                     self.set_visible("HostBanner", false)?;
-                    self.set_visible("HostCodeBadge", false)?;
+                    self.refresh_host_code()?;
                 }
                 _ => {}
             }
@@ -1085,18 +1083,17 @@ impl App {
         Ok(())
     }
 
-    /// 把当前访问码（自定义密码或临时码）刷到主界面的码标签上。
+    /// 把当前临时验证码刷到「开始协助」页的码标签上；被控没开时显示占位。
     fn refresh_host_code(&mut self) -> Result<()> {
         let code = self.host_rt.temp_code.clone();
         self.label(
             "HostCode",
             if code.is_empty() {
-                "——— ———"
+                "开启后显示"
             } else {
                 &code
             },
-        )?;
-        self.set_visible("HostCodeBadge", !code.is_empty())
+        )
     }
 
     /// 信令客户端换了一个（重建 / 停止）后同步给被控服务（core v0.2.6+）。
@@ -1113,7 +1110,7 @@ impl App {
         self.host_rt.stop_for_logout();
         self.approval_generation = None;
         let _ = self.set_visible("HostBanner", false);
-        let _ = self.set_visible("HostCodeBadge", false);
+        let _ = self.refresh_host_code();
         let _ = self.set_visible("HostApprovalOverlay", false);
     }
 
@@ -1124,7 +1121,7 @@ impl App {
         persist_host_enabled(on);
         if !on {
             self.host_rt.stop();
-            self.set_visible("HostCodeBadge", false)?;
+            self.refresh_host_code()?;
             self.set_visible("HostBanner", false)?;
             self.label("HostError", "")?;
             return Ok(());
@@ -1201,6 +1198,13 @@ impl App {
         }
         eprintln!("[on_tick] logged_in");
         self.tick += 1;
+        if self
+            .local_notice_until
+            .is_some_and(|until| self.tick >= until)
+        {
+            self.local_notice_until = None;
+            let _ = self.label("LocalNotice", "");
+        }
         // 工具面板开着时每半秒按窗口的可用范围重夹一次面板宽度（窗口拉大 / 缩小后跟上）
         if self.tool_panel_visible && self.tick % 10 == 0 {
             self.apply_tool_width()?;
@@ -1284,12 +1288,12 @@ impl App {
                     active_display_id: self.quality.active_display_id,
                 };
                 self.quality_fps_options = sess::fps_candidates(*max_fps);
-                self.sync_quality_bar()?;
+                self.sync_quality_menu()?;
             }
             // M3.3：鼠标模式回传 → 工具条选中态
             if let SessionUpdate::MouseModeState { mode } = &update {
                 self.quality.mouse_mode = Some(mode.clone());
-                self.sync_quality_bar()?;
+                self.sync_quality_menu()?;
             }
             // M3.8：显示器列表回传 → 下拉重建
             if let SessionUpdate::DisplaysState {
@@ -1311,7 +1315,7 @@ impl App {
                     })
                     .collect();
                 self.quality.active_display_id = *active_display_id;
-                self.sync_quality_bar()?;
+                self.sync_quality_menu()?;
             }
             if matches!(update, SessionUpdate::Ended { .. }) {
                 session_running = false;
@@ -1461,13 +1465,22 @@ impl App {
                 self.show_page(page)
             }
             Action::CopyId => {
-                if let Some(id) = self.auth.server_config().cached_device_id.clone() {
-                    copy_to_clipboard(&server_config::format_device_id(&id));
-                    self.label("AssistError", "设备 ID 已复制到剪贴板。")?;
-                } else {
-                    self.label("AssistError", "本机设备码尚未分配。")?;
+                // 「复制并分享」：和托盘菜单同一份文案（设备 ID + 临时验证码），伙伴拿到就能直接连
+                match self.auth.server_config().cached_device_id {
+                    Some(id) => {
+                        copy_to_clipboard(&rc_appcore::share_code::share_text(
+                            &id,
+                            &self.host_rt.temp_code,
+                        ));
+                        self.show_local_notice("已复制 ID 与验证码")?;
+                    }
+                    None => self.show_local_notice("本机设备码尚未分配")?,
                 }
                 Ok(())
+            }
+            Action::DeviceSearch(text) => {
+                self.device_filter = text;
+                self.render_devices()
             }
             Action::AssistToggled(on) => {
                 // 回填保存的偏好时开关同样会发 Toggled：与已存值一致就不是用户在操作。
@@ -1492,7 +1505,6 @@ impl App {
                     })
                 })
             }
-            Action::ToggleCodeVisibility => Ok(()),
             Action::AdvancedToggle => {
                 let visible = self.peer_advanced_visible();
                 self.set_visible("PeerAdvancedRow", !visible)
@@ -1530,9 +1542,8 @@ impl App {
                 }
                 Ok(())
             }
-            Action::DisplayChanged => {
-                self.on_display_changed()?;
-                Ok(())
+            Action::StreamSettingPicked(setting, index) => {
+                self.on_stream_setting_picked(setting, index)
             }
             Action::ToolToggle => self.on_tool_toggle(),
             Action::ToolTab(tab) => self.on_tool_tab(tab),
@@ -1622,22 +1633,6 @@ impl App {
                 if let Some(host) = self.session_host.as_ref() {
                     self.fullscreen = host.toggle_fullscreen();
                 }
-                Ok(())
-            }
-            Action::SessionQualityToggle => {
-                let visible = self
-                    .find_opt::<UIElement>("QualityBar")
-                    .and_then(|e| e.Visibility().ok())
-                    .map(|v| v != Visibility::Visible)
-                    .unwrap_or(false);
-                self.set_visible("QualityBar", visible)
-            }
-            Action::StreamQualityChanged => {
-                self.on_quality_changed()?;
-                Ok(())
-            }
-            Action::MouseModeChanged => {
-                self.on_mouse_mode_changed()?;
                 Ok(())
             }
             Action::StageRectChanged(width, height) => {
