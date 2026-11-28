@@ -66,7 +66,7 @@
       <ColumnDefinition Width="Auto"/>
       <ColumnDefinition Width="*"/>
     </Grid.ColumnDefinitions>
-    <!-- M4 工具面板（终端/文件/端口映射；ToolToggle 切换显隐） -->
+    <!-- M4 工具面板（终端/文件/端口映射；ToolToggle 切换显隐）。宽度随 tab 变化，也可拖右侧分隔条（on_tool_tab / on_tool_splitter） -->
     <Border x:Name="ToolPanel" Visibility="Collapsed" Width="340" BorderBrush="{ThemeResource DividerBrush}" BorderThickness="0,0,1,0" Background="#141D27">
       <Grid>
         <Grid.RowDefinitions>
@@ -78,31 +78,59 @@
           <ToggleButton x:Name="ToolTabFiles" Content="文件" Style="{StaticResource NavItem}" Width="100"/>
           <ToggleButton x:Name="ToolTabPortmap" Content="端口" Style="{StaticResource NavItem}" Width="100"/>
         </StackPanel>
-        <!-- 终端 -->
-        <Grid x:Name="TerminalPane" Grid.Row="1" Margin="10,0,10,10">
+        <!-- 终端：真终端（VT 屏幕模型 + 按列定位的自绘网格，见 terminal_view.rs）。
+             两层画布：TerminalBg 画底色条 / 选区 / 光标，TerminalFg 画文本；元素按行复用，不每帧重建。
+             TerminalIme 是一个透明的小输入框：承接可打印字符与输入法，其余按键在 PreviewKeyDown 里编码后直接发送。 -->
+        <Grid x:Name="TerminalPane" Grid.Row="1" Margin="10,4,10,10">
           <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
           </Grid.RowDefinitions>
-          <ScrollViewer x:Name="TerminalScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <!-- RichTextBlock 没有 Background：底色与内边距由外层 Border 承载 -->
-            <Border Background="#0D1620" CornerRadius="6" Padding="8,6" MinHeight="360">
-              <RichTextBlock x:Name="TerminalOutput" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"
-                             Foreground="#C9D8E8" IsHitTestVisible="False"/>
-            </Border>
-          </ScrollViewer>
+          <Border Background="#1A1B1F" CornerRadius="6" Padding="8,6" BorderBrush="#2A2C33" BorderThickness="1" MinHeight="96">
+            <!-- 背景给 Transparent：没有背景的 Grid 不参与命中测试，空白处收不到指针事件 -->
+            <Grid x:Name="TerminalHost" Background="Transparent">
+              <Canvas x:Name="TerminalBg"/>
+              <Canvas x:Name="TerminalFg"/>
+              <!-- 滚动条滑块与输入框要按格子坐标定位，而 Canvas.Left / Top 只对 Canvas 的直接子元素生效：
+                   所以单独放一层与画面同大的 Canvas，两者都是它的直接子元素 -->
+              <Canvas x:Name="TerminalOverlay">
+              <Rectangle x:Name="TerminalThumb" Fill="#5A5E68" RadiusX="2" RadiusY="2" Width="4" Visibility="Collapsed"/>
+              <TextBox x:Name="TerminalIme" Opacity="0" Width="2" Height="2" MinWidth="0" MinHeight="0" Padding="0" BorderThickness="0"
+                       Background="Transparent" Foreground="Transparent" FontSize="1" IsSpellCheckEnabled="False" IsTextPredictionEnabled="False"
+                       AcceptsReturn="True" TextWrapping="NoWrap" ScrollViewer.HorizontalScrollBarVisibility="Hidden" ScrollViewer.VerticalScrollBarVisibility="Hidden"
+                       AutomationProperties.Name="终端输入"/>
+              </Canvas>
+              <!-- 翻看历史时下面又来了新输出：点一下回到底部 -->
+              <Button x:Name="TerminalBehind" Content="↓ 新输出" Style="{StaticResource SecondaryButton}" Height="28" Padding="12,0" FontSize="12" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,18,8" Visibility="Collapsed" Canvas.ZIndex="5"/>
+              <StackPanel x:Name="TerminalEmpty" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6" IsHitTestVisible="False">
+                <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE756;" FontSize="22" Foreground="#5F6672" HorizontalAlignment="Center"/>
+                <TextBlock Text="远程终端" FontSize="15" FontWeight="SemiBold" Foreground="#F2F3F5" HorizontalAlignment="Center"/>
+                <TextBlock Text="在远端设备上打开命令行；直接在这里敲命令" FontSize="12" Foreground="#8A8F9A" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="260"/>
+              </StackPanel>
+              <!-- 被控端锁屏时：验证系统密码后才能用终端（只校验密码，不解锁屏幕） -->
+              <Border x:Name="TerminalLock" Background="#F21A1B1F" CornerRadius="6" Padding="18,16" Visibility="Collapsed">
+                <StackPanel Spacing="8" VerticalAlignment="Center">
+                  <TextBlock Text="被控端已锁屏，请验证系统密码" FontSize="14" FontWeight="SemiBold" Foreground="#F2F3F5" TextWrapping="Wrap"/>
+                  <TextBlock Text="仅校验被控端系统登录密码，不会解锁被控端屏幕" FontSize="12" Foreground="#8A8F9A" TextWrapping="Wrap"/>
+                  <TextBlock x:Name="TerminalLockUser" Text="" FontSize="12" Foreground="#C9D8E8" TextWrapping="Wrap" Visibility="Collapsed"/>
+                  <TextBox x:Name="TerminalLockUsername" PlaceholderText="系统用户名" FontSize="13" Height="32" Visibility="Collapsed"/>
+                  <PasswordBox x:Name="TerminalLockPassword" PlaceholderText="系统登录密码" FontSize="13" Height="32"/>
+                  <TextBlock x:Name="TerminalLockError" Text="" FontSize="12" Foreground="#F87171" TextWrapping="Wrap"/>
+                  <Button x:Name="TerminalLockSubmit" Content="验证并进入" Style="{StaticResource PrimaryButton}" Height="36" HorizontalAlignment="Right"/>
+                </StackPanel>
+              </Border>
+            </Grid>
+          </Border>
           <Grid Grid.Row="1" Margin="0,8,0,0">
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="*"/>
               <ColumnDefinition Width="Auto"/>
               <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBox x:Name="TerminalInput" PlaceholderText="输入命令，Enter 发送" FontSize="13" Height="32"/>
-            <Button x:Name="TerminalSend" Grid.Column="1" Content="发送" Style="{StaticResource SecondaryButton}" Height="32" Margin="6,0,0,0"/>
+            <TextBlock x:Name="TerminalHint" Text="" FontSize="11" Foreground="#8A8F9A" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+            <Button x:Name="TerminalClose" Grid.Column="1" Content="结束" Style="{StaticResource SecondaryButton}" Height="32" Margin="6,0,0,0" IsEnabled="False"/>
             <Button x:Name="TerminalNew" Grid.Column="2" Content="新终端" Style="{StaticResource SecondaryButton}" Height="32" Margin="6,0,0,0"/>
           </Grid>
-          <TextBlock x:Name="TerminalHint" Grid.Row="2" Text="尚未打开终端会话" FontSize="11" Foreground="#6E829B" Margin="0,6,0,0"/>
         </Grid>
         <!-- 文件 -->
         <Grid x:Name="FilesPane" Grid.Row="1" Visibility="Collapsed" Margin="10,0,10,10">
@@ -142,6 +170,8 @@
         </Grid>
       </Grid>
     </Border>
+    <!-- 工具面板右缘的分隔条：拖动改面板宽度 -->
+    <Border x:Name="ToolSplitter" Grid.Column="0" Width="8" HorizontalAlignment="Right" VerticalAlignment="Stretch" Background="Transparent" BorderBrush="#34455C" BorderThickness="0,0,1,0" Visibility="Collapsed"/>
     <Grid Grid.Column="1" x:Name="SessionStage">
     <SwapChainPanel x:Name="SessionPanel"/>
     <StackPanel x:Name="SessionOverlay" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10" IsHitTestVisible="False">

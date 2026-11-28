@@ -56,8 +56,14 @@ pub(crate) enum Action {
     DisplayChanged,
     ToolToggle,
     ToolTab(u8),
-    TerminalSend,
+    /// 点了已经选中的工具 tab（ToggleButton 把它取消了选中）。
+    ToolTabUnchecked(u8),
     TerminalNew,
+    TerminalClose,
+    /// 翻看历史时有新输出：点一下回到底部继续跟随。
+    TerminalToBottom,
+    /// 终端锁屏校验：提交被控端系统密码。
+    TerminalLockSubmit,
     FileUploadPick,
     FileDownloadPick,
     TransferCancel(u64),
@@ -108,6 +114,10 @@ pub(crate) enum Event {
     WolFinished(String, std::result::Result<String, String>),
     /// 设备证书续签结果（后台线程）。
     CertRenewFinished(std::result::Result<String, String>),
+    /// 剪贴板文本读回来了（终端粘贴用）。
+    ClipboardRead(std::result::Result<String, String>),
+    /// 工具面板分隔条：按下 / 拖动（相对按下点的横向位移，逻辑像素）/ 松开。
+    ToolSplitter(Option<f64>),
 }
 
 /// 会话启动结果（Box 降低 Event 枚举整体尺寸）。
@@ -140,6 +150,50 @@ pub(crate) enum SessionPointerEvent {
 pub(crate) struct SessionKeyEvent {
     pub(crate) key: VirtualKey,
     pub(crate) pressed: bool,
+}
+
+/// 终端面板事件（纯值）。会话窗口里的元素经事件通道回传，App 在 UI 线程统一处理。
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum TerminalEvent {
+    /// 输入框 `PreviewKeyDown` 里被本地消费的按键（虚拟键码 + 修饰键）：
+    /// 交给输入框解析的字符键不发——它们走 [`TerminalEvent::TextCommitted`]。
+    Key {
+        code: u32,
+        shift: bool,
+        ctrl: bool,
+        alt: bool,
+    },
+    /// 输入框里有了文本（可打印字符 / 输入法上屏）。
+    TextCommitted,
+    /// 输入法组合输入开始 / 结束。
+    Composition(bool),
+    /// 输入框获得 / 失去键盘焦点。
+    Focus(bool),
+    /// 终端画面上的指针事件（坐标相对画面左上角，逻辑像素）。
+    Pointer(TerminalPointer),
+    /// 终端画面尺寸变了（App 自己去读实际宽高）。
+    Resized,
+}
+
+/// 终端画面上的指针事件（纯值）。
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum TerminalPointer {
+    /// 按下：`button` 0 左 / 1 右 / 2 中，`time_us` 是事件时间戳（微秒，数连击用）。
+    Press {
+        x: f64,
+        y: f64,
+        button: u8,
+        time_us: u64,
+    },
+    /// 移动。
+    Move { x: f64, y: f64 },
+    /// 松开。
+    Release,
+    /// 滚轮（`delta` 为正向上滚）。
+    Wheel { delta: i32 },
+    /// 滚动条滑块：`pressed` 为真是按下（`y` 落在滑块上就是抓住它，落在轨道别处就是跳过去），
+    /// 为假是按着拖动；`y` 是指针离画面顶端的距离。
+    Thumb { y: f64, pressed: bool },
 }
 
 impl Action {

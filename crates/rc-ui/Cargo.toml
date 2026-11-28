@@ -26,6 +26,7 @@ rc-input.workspace = true
 rc-types.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+unicode-width.workspace = true
 # 0.37 is the last windows-rs release with the inbox Windows.UI.Xaml projections.
 # 会话渲染表面（SharedDevice DXGI / ISwapChainPanelNative）走 0.58 世界，与 0.37 并存
 windows58 = { package = "windows", version = "0.58", features = [
@@ -46,5 +47,5 @@ windows = { version = "0.37", features = [
     "Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11",
     "Win32_Graphics_Direct3D_Fxc", "Win32_Graphics_Dwm", "Win32_UI_Controls", "Win32_UI_Controls_Dialogs", "Win32_UI_Shell", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Gdi", "Win32_Security", "Win32_System_LibraryLoader",
     "Win32_System_Threading", "Win32_System_WinRT", "Win32_System_WinRT_Xaml", "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse",
-    "UI_Input", "UI_Xaml_Automation",
+    "UI_Core", "UI_Input", "UI_Xaml_Automation",
 ] }

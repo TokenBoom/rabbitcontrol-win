@@ -1,7 +1,10 @@
-//! M4 工具面板：终端（文本视图）/ 文件传输 / 端口映射。
+//! M4 工具面板：终端（真终端）/ 文件传输 / 端口映射。
 //!
 //! 事件驱动：on_tick 排空 `try_recv_terminal_event` / `try_recv_file_event`，
-//! 经 dirty 标志在本 tick 末统一渲染（终端输出密集时只 SetText 一次）。
+//! 经 dirty 标志在本 tick 末统一渲染（终端输出密集时只重画一次）。
+//! 面板宽度随 tab 变化，也可以拖右侧分隔条；停在终端 tab 时，画面尺寸决定终端的行列数。
+
+use std::sync::{Arc, Mutex};
 
 use super::super::actions::*;
 use super::super::App;
@@ -9,13 +12,41 @@ use rc_tools::file_transfer::TransferDirection;
 use rc_tools::file_transfer::TransferStatus;
 use rc_tools::portmap::PortMapStatus;
 use windows::core::{Interface, Result, HSTRING};
-use windows::UI::Xaml::Controls::{StackPanel, TextBox};
+use windows::UI::Core::{CoreCursor, CoreCursorType, CoreWindow};
+use windows::UI::Xaml::Controls::StackPanel;
+use windows::UI::Xaml::Controls::TextBox;
+use windows::UI::Xaml::FrameworkElement;
+use windows::UI::Xaml::Input::PointerEventHandler;
+use windows::UI::Xaml::UIElement;
+
+use crate::ui::session_window::SessionWindow;
+
+/// 面板还没排过版（刚打开会话窗口）时，开终端用的行列数：与 macOS 端一致。
+pub(crate) const FALLBACK_COLS: usize = 80;
+pub(crate) const FALLBACK_ROWS: usize = 24;
+/// 工具面板各 tab 的默认宽度（逻辑像素）：终端要放得下一屏命令，另两个窄一些。
+pub(crate) const DEFAULT_TOOL_WIDTHS: [f64; 3] = [600.0, 340.0, 340.0];
+const MIN_TOOL_WIDTH: f64 = 280.0;
+/// 无论面板拖多宽，都给远程画面留这么多。
+const MIN_STAGE_WIDTH: f64 = 360.0;
+/// 终端开着时常驻在画面下方的一行操作提示。
+const TERMINAL_HINT: &str = "拖动选择文字；Ctrl+Shift+C 复制、Ctrl+Shift+V 粘贴；滚轮翻看历史";
+
+/// 换掉窗口里的鼠标指针形状。
+fn set_cursor(kind: CoreCursorType) -> Result<()> {
+    CoreWindow::GetForCurrentThread()?.SetPointerCursor(CoreCursor::CreateCursor(kind, 1)?)
+}
 
 impl App {
     /// 工具面板显隐切换。
     pub(crate) fn on_tool_toggle(&mut self) -> Result<()> {
         self.tool_panel_visible = !self.tool_panel_visible;
         self.set_visible("ToolPanel", self.tool_panel_visible)?;
+        self.set_visible("ToolSplitter", self.tool_panel_visible)?;
+        if self.tool_panel_visible {
+            self.apply_tool_width()?;
+            self.terminal_dirty = true;
+        }
         Ok(())
     }
 
@@ -28,19 +59,132 @@ impl App {
         self.set_checked_named("ToolTabTerminal", tab == 0)?;
         self.set_checked_named("ToolTabFiles", tab == 1)?;
         self.set_checked_named("ToolTabPortmap", tab == 2)?;
-        if tab == 1 {
-            self.render_transfers()?;
-        }
-        if tab == 2 {
-            self.render_portmaps()?;
+        self.apply_tool_width()?;
+        match tab {
+            0 => self.terminal_dirty = true,
+            1 => self.render_transfers()?,
+            _ => self.render_portmaps()?,
         }
         Ok(())
+    }
+
+    /// 点了已经选中的 tab：ToggleButton 会把它取消选中，可面板其实还停在这个 tab 上——把选中态补回来。
+    pub(crate) fn on_tool_tab_unchecked(&mut self, tab: u8) -> Result<()> {
+        if self.tool_tab == tab {
+            self.set_checked_named(
+                match tab {
+                    0 => "ToolTabTerminal",
+                    1 => "ToolTabFiles",
+                    _ => "ToolTabPortmap",
+                },
+                true,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// 按当前 tab 设定工具面板宽度（夹在可用范围里）；窗口拉大 / 缩小后可用范围变了，再调一次就会跟上。
+    pub(crate) fn apply_tool_width(&self) -> Result<()> {
+        let (min, max) = self.tool_width_range();
+        let width = self.tool_widths[usize::from(self.tool_tab)].clamp(min, max);
+        let panel: FrameworkElement = self.find("ToolPanel")?;
+        if (panel.ActualWidth()? - width).abs() < 0.5 {
+            return Ok(());
+        }
+        panel.SetWidth(width)
+    }
+
+    /// 面板宽度的可用范围：上限保证远程画面还有 [`MIN_STAGE_WIDTH`] 宽。
+    fn tool_width_range(&self) -> (f64, f64) {
+        let window = self
+            .session_host
+            .as_ref()
+            .map_or(1024.0, SessionWindow::client_width);
+        (
+            MIN_TOOL_WIDTH,
+            (window - MIN_STAGE_WIDTH).max(MIN_TOOL_WIDTH),
+        )
+    }
+
+    /// 工具面板右缘分隔条：按下时抓住指针，拖动按相对按下点的横向位移改面板宽度。
+    pub(crate) fn wire_tool_splitter(&self) -> Result<()> {
+        let splitter: UIElement = self.find("ToolSplitter")?;
+        let sender = self.sender();
+        // 按下点的横坐标；拖动期间指针发来的位移都相对它
+        let origin: Arc<Mutex<Option<f64>>> = Arc::new(Mutex::new(None));
+        splitter.PointerPressed(PointerEventHandler::new({
+            let (origin, sender, splitter) = (origin.clone(), sender.clone(), splitter.clone());
+            move |_, args| {
+                if let Some(args) = args {
+                    let x = f64::from(args.GetCurrentPoint(None)?.Position()?.X);
+                    *origin.lock().unwrap_or_else(|e| e.into_inner()) = Some(x);
+                    if let Ok(pointer) = args.Pointer() {
+                        let _ = splitter.CapturePointer(&pointer);
+                    }
+                    args.SetHandled(true)?;
+                    sender.send(Event::ToolSplitter(Some(0.0)));
+                }
+                Ok(())
+            }
+        }))?;
+        splitter.PointerMoved(PointerEventHandler::new({
+            let (origin, sender) = (origin.clone(), sender.clone());
+            move |_, args| {
+                if let Some(args) = args {
+                    let pressed = *origin.lock().unwrap_or_else(|e| e.into_inner());
+                    if let Some(pressed) = pressed {
+                        let x = f64::from(args.GetCurrentPoint(None)?.Position()?.X);
+                        sender.send(Event::ToolSplitter(Some(x - pressed)));
+                    }
+                }
+                Ok(())
+            }
+        }))?;
+        splitter.PointerReleased(PointerEventHandler::new({
+            let (origin, sender) = (origin, sender);
+            move |_, args| {
+                if let Some(args) = args {
+                    args.SetHandled(true)?;
+                    *origin.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                    sender.send(Event::ToolSplitter(None));
+                }
+                Ok(())
+            }
+        }))?;
+        // 鼠标移到分隔条上换成左右箭头，离开再换回来
+        splitter.PointerEntered(PointerEventHandler::new(move |_, _| {
+            set_cursor(CoreCursorType::SizeWestEast)
+        }))?;
+        splitter.PointerExited(PointerEventHandler::new(move |_, _| {
+            set_cursor(CoreCursorType::Arrow)
+        }))?;
+        Ok(())
+    }
+
+    /// 分隔条事件：`Some(位移)` 是按下 / 拖动，`None` 是松开。
+    pub(crate) fn on_tool_splitter(&mut self, drag: Option<f64>) -> Result<()> {
+        let tab = usize::from(self.tool_tab);
+        match drag {
+            Some(delta) => {
+                let panel: FrameworkElement = self.find("ToolPanel")?;
+                let start = *self
+                    .tool_splitter_drag
+                    .get_or_insert_with(|| panel.ActualWidth().unwrap_or(DEFAULT_TOOL_WIDTHS[tab]));
+                let (min, max) = self.tool_width_range();
+                self.tool_widths[tab] = (start + delta).clamp(min, max);
+                self.apply_tool_width()
+            }
+            None => {
+                self.tool_splitter_drag = None;
+                Ok(())
+            }
+        }
     }
 
     /// 设置复选类按钮（`ToggleButton`：工具 tab 等）的选中状态。
     pub(crate) fn set_checked_named(&self, name: &str, on: bool) -> Result<()> {
         let toggle: windows::UI::Xaml::Controls::Primitives::ToggleButton = self.find(name)?;
-        super::super::set_checked(&toggle, on)
+        set_checked(&toggle, on)
     }
 
     /// 设置拨动开关（`ToggleSwitch`：被控开关、自启开关等）的开 / 关。
@@ -52,53 +196,69 @@ impl App {
         switch.SetIsOn(on)
     }
 
-    /// 打开新终端（attach）。
+    /// 打开新终端：按画面实际放得下的行列数开（面板还没排过版就用默认值）。
     pub(crate) fn on_terminal_new(&mut self) -> Result<()> {
         let Some(active) = self.session.as_ref() else {
-            self.label("TerminalHint", "未连接会话。")?;
-            return Ok(());
+            return self.set_terminal_hint("未连接会话。");
         };
-        self.label("TerminalHint", "正在打开终端…")?;
+        if active.watch_only {
+            return self.set_terminal_hint("只读观看模式下不能使用终端。");
+        }
+        if !self.terminal_allowed {
+            return self.set_terminal_hint("对方不允许本会话使用终端。");
+        }
+        let (cols, rows) = if self.terminal_view.measured() {
+            self.terminal.size()
+        } else {
+            (FALLBACK_COLS, FALLBACK_ROWS)
+        };
+        // 新终端从干净的画面开始；随后远端送来的第一条就是它的提示符
+        self.terminal.reset();
+        self.terminal_dirty = true;
+        self.set_terminal_hint("正在打开终端…")?;
+        let dimension = |value: usize| u16::try_from(value).unwrap_or(u16::MAX);
         match active.handle.tools().terminal_open_with_options(
-            super::terminal_view::TERMINAL_COLS,
-            super::terminal_view::TERMINAL_ROWS,
+            dimension(cols),
+            dimension(rows),
             None,
             true,
         ) {
-            Ok(_term_id) => Ok(()),
-            Err(err) => self.label("TerminalHint", &format!("打开失败：{err}")),
+            Ok(_) => Ok(()),
+            Err(err) => self.set_terminal_hint(&format!("打开失败：{err}")),
         }
     }
 
-    /// 发送输入行（补 \n；本地回显）。
-    pub(crate) fn on_terminal_send(&mut self) -> Result<()> {
+    /// 结束当前终端（远端的进程随之退出，画面留到远端报告结束）。
+    pub(crate) fn on_terminal_close(&mut self) -> Result<()> {
         let Some(term_id) = self.terminal_id else {
             return Ok(());
         };
-        let input = self
-            .find_opt::<TextBox>("TerminalInput")
-            .and_then(|b| b.Text().ok())
-            .map(|t| t.to_string())
-            .unwrap_or_default();
-        if input.is_empty() {
-            return Ok(());
-        }
-        let Some(active) = self.session.as_ref() else {
-            return Ok(());
-        };
-        let mut data = input.into_bytes();
-        data.push(b'\n');
-        if let Err(err) = active.handle.tools().terminal_input(term_id, &data) {
-            self.label("TerminalHint", &format!("发送失败：{err}"))?;
-            return Ok(());
-        }
-        if let Some(box_) = self.find_opt::<TextBox>("TerminalInput") {
-            let _ = box_.SetText(HSTRING::new());
+        if let Some(active) = self.session.as_ref() {
+            if let Err(err) = active.handle.tools().terminal_close(term_id) {
+                return self.set_terminal_hint(&format!("结束失败：{err}"));
+            }
         }
         Ok(())
     }
 
-    /// 终端事件排空（on_tick 调用；dirty 后由 finish_tools_render 统一刷 UI）。
+    /// 把终端当前的行列数告诉远端（画面尺寸变了 / 刚开好或附着上终端时）。
+    fn notify_terminal_resize(&self) -> Result<()> {
+        let (Some(term_id), Some(active)) = (self.terminal_id, self.session.as_ref()) else {
+            return Ok(());
+        };
+        let (cols, rows) = self.terminal.size();
+        let dimension = |value: usize| u16::try_from(value).unwrap_or(u16::MAX);
+        match active
+            .handle
+            .tools()
+            .terminal_resize(term_id, dimension(cols), dimension(rows))
+        {
+            Ok(()) => Ok(()),
+            Err(err) => self.set_terminal_hint(&format!("调整终端尺寸失败：{err}")),
+        }
+    }
+
+    /// 终端事件排空（on_tick 调用；终端输出交给屏幕模型，由 dirty 标志在本 tick 末统一重画）。
     pub(crate) fn drain_terminal_events(&mut self) {
         let mut events = Vec::new();
         if let Some(active) = self.session.as_ref() {
@@ -109,49 +269,58 @@ impl App {
         for ev in events {
             use rc_tools::terminal::TerminalEvent;
             match ev {
-                TerminalEvent::Output { bytes, .. } => {
-                    // 原始字节交给 VT 屏幕模型（跨块的 UTF-8 / 转义序列在模型内拼接）
-                    self.terminal.feed_bytes(&bytes);
+                // 刚被结束的那个终端迟到的输出不再上屏
+                TerminalEvent::Output { term_id, bytes, .. }
+                    if Some(term_id) == self.terminal_id =>
+                {
+                    self.terminal.feed_output(&bytes);
+                    self.terminal_blink.touch(self.tick);
                     self.terminal_dirty = true;
                 }
                 TerminalEvent::Opened {
                     term_id, ok, error, ..
                 } => {
                     if ok {
-                        self.terminal_id = Some(term_id);
-                        self.terminal.full_reset();
-                        self.terminal_dirty = true;
-                        let _ = self.label("TerminalHint", &format!("终端 #{term_id} 已就绪"));
+                        self.open_terminal(term_id);
                     } else {
-                        let _ = self.label(
-                            "TerminalHint",
-                            &format!("打开失败：{}", error.unwrap_or_default()),
-                        );
+                        let _ = self
+                            .set_terminal_hint(&format!("打开失败：{}", error.unwrap_or_default()));
                     }
                 }
                 TerminalEvent::Attached {
                     term_id, ok, error, ..
                 } => {
                     if ok {
-                        self.terminal_id = Some(term_id);
-                        let _ = self.label("TerminalHint", &format!("终端 #{term_id} 已附着"));
+                        self.open_terminal(term_id);
                     } else {
-                        let _ = self.label(
-                            "TerminalHint",
-                            &format!("附着失败：{}", error.unwrap_or_default()),
-                        );
+                        let _ = self
+                            .set_terminal_hint(&format!("附着失败：{}", error.unwrap_or_default()));
                     }
                 }
                 TerminalEvent::Exited { term_id, .. } if self.terminal_id == Some(term_id) => {
                     self.terminal_id = None;
-                    self.terminal
-                        .feed(&format!("\r\n[终端 #{term_id} 已退出]\r\n"));
+                    self.terminal.feed_output(
+                        format!("\r\n\x1b[90m[终端 #{term_id} 已结束]\x1b[0m\r\n").as_bytes(),
+                    );
                     self.terminal_dirty = true;
-                    let _ = self.label("TerminalHint", "终端已退出，可点击「新终端」重开");
+                    let _ = self.set_terminal_hint("终端已结束，可点击「新终端」重开");
                 }
                 _ => {}
             }
         }
+        // 屏幕模型对远端查询（DA / DSR）的应答写回去：依赖应答的全屏程序不必干等
+        let replies = self.terminal.take_responses();
+        if !replies.is_empty() {
+            let _ = self.send_terminal_input(&replies);
+        }
+    }
+
+    /// 远端确认终端开好 / 附着上了：对齐它与本地的行列数。
+    fn open_terminal(&mut self, term_id: u32) {
+        self.terminal_id = Some(term_id);
+        self.terminal_dirty = true;
+        let _ = self.set_terminal_hint(TERMINAL_HINT);
+        let _ = self.notify_terminal_resize();
     }
 
     /// 文件事件排空（on_tick 调用）。
@@ -477,16 +646,8 @@ impl App {
 
     /// 本 tick 末统一渲染工具面板（脏标志驱动）。
     pub(crate) fn finish_tools_render(&mut self) -> Result<()> {
-        if self.terminal_dirty {
-            self.terminal_dirty = false;
-            self.render_terminal()?;
-            if let Some(scroll) =
-                self.find_opt::<windows::UI::Xaml::Controls::ScrollViewer>("TerminalScroll")
-            {
-                let offset = windows::Foundation::PropertyValue::CreateDouble(1.0e6)?;
-                let reference: windows::Foundation::IReference<f64> = offset.cast()?;
-                let _ = scroll.ChangeView(None, &reference, None);
-            }
+        if self.tool_tab == 0 {
+            self.terminal_tick()?;
         }
         if self.transfers_dirty {
             self.transfers_dirty = false;
@@ -497,13 +658,21 @@ impl App {
         Ok(())
     }
 
-    /// 会话结束清理（清空终端/传输状态）。
+    /// 会话结束清理（清空终端 / 传输状态）。
     pub(crate) fn reset_tools_state(&mut self) {
-        self.terminal.full_reset();
+        self.terminal.reset();
+        self.terminal_view.invalidate();
         self.terminal_id = None;
-        self.transfers.clear();
+        self.terminal_allowed = true;
+        self.terminal_lock = Default::default();
+        self.terminal_lock_username = None;
         self.terminal_dirty = true;
+        self.transfers.clear();
         self.transfers_dirty = true;
+        if self.session_host.is_some() {
+            let _ = self.sync_terminal_lock();
+            let _ = self.set_terminal_hint("");
+        }
     }
 }
 

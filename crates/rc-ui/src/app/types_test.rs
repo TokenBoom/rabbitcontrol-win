@@ -21,7 +21,7 @@ const SESSION_XAML: &str = include_str!("../ui/assets/session_window.xaml");
 fn compatible_types(tag: &str) -> Option<&'static [&'static str]> {
     let table: &'static [&'static str] = match tag {
         "TextBlock" => &["TextBlock", "FrameworkElement", "UIElement"],
-        "RichTextBlock" => &["RichTextBlock", "FrameworkElement", "UIElement"],
+        "Canvas" => &["Canvas", "Panel", "FrameworkElement", "UIElement"],
         "Image" => &["Image", "FrameworkElement", "UIElement"],
         "Ellipse" => &["Ellipse", "Shape", "FrameworkElement", "UIElement"],
         "Rectangle" => &["Rectangle", "Shape", "FrameworkElement", "UIElement"],

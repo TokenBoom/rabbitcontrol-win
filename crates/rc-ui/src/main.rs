@@ -94,6 +94,13 @@ fn run() -> Result<(), Box<dyn Error>> {
     rc_appcore::p2p_port_lease::register_hook();
     let shell = ui::shell::Shell::new()?;
     let mut app = app::App::new(&shell)?;
+    // 调试：不连远端，直接开会话窗口演示终端面板（演示输出 + 键入本地回显）
+    #[cfg(debug_assertions)]
+    if std::env::args().skip(1).any(|arg| arg == "--demo-terminal") {
+        if let Err(err) = app.start_terminal_demo() {
+            eprintln!("[demo-terminal] {err}");
+        }
+    }
     let _ = shell.show_and_run(|| app.dispatch());
     Ok(())
 }

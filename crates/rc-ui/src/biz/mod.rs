@@ -8,5 +8,9 @@ pub mod history;
 pub mod proxy_cfg;
 pub mod session;
 pub mod settings;
+pub mod terminal;
+#[cfg(debug_assertions)]
+pub mod terminal_demo;
+pub mod terminal_keys;
 pub mod update_check;
 pub mod vt;

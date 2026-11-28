@@ -107,10 +107,28 @@ pub struct App {
     /// M4 工具面板状态。
     tool_panel_visible: bool,
     tool_tab: u8,
-    terminal: crate::biz::vt::VtScreen,
-    terminal_brushes: std::collections::HashMap<u32, windows::UI::Xaml::Media::SolidColorBrush>,
+    terminal: crate::biz::terminal::Terminal,
+    terminal_view: pages::terminal_view::TerminalView,
+    terminal_blink: crate::biz::terminal::Blink,
+    /// 输入框（终端的键盘焦点）是否持有焦点：没有就不画光标。
+    terminal_focused: bool,
+    /// 输入法正在组合输入：期间输入框里的字是拼到一半的，不能发走。
+    terminal_composing: bool,
+    /// 对方是否允许本会话使用终端（被控端通告；旧版本对端默认允许）。
+    terminal_allowed: bool,
+    terminal_lock: pages::terminal_view::TerminalLock,
+    terminal_lock_username: Option<String>,
     terminal_id: Option<u32>,
     terminal_dirty: bool,
+    /// 画面尺寸停稳后要把新行列数告诉远端的 tick。
+    terminal_resize_due: Option<u64>,
+    /// 工具面板各 tab 的宽度（逻辑像素）；拖分隔条时改。
+    tool_widths: [f64; 3],
+    /// 分隔条拖动中：按下时的面板宽度。
+    tool_splitter_drag: Option<f64>,
+    /// 调试：`--demo-terminal` 的演示状态（仅调试构建）。
+    #[cfg(debug_assertions)]
+    terminal_demo: Option<crate::biz::terminal_demo::Demo>,
     transfers: Vec<rc_tools::file_transfer::TransferItem>,
     transfers_dirty: bool,
     portmaps: Vec<rc_tools::portmap::PortMapRuleSnapshot>,
@@ -228,13 +246,24 @@ impl App {
             fullscreen: false,
             tool_panel_visible: false,
             tool_tab: 0,
-            terminal: crate::biz::vt::VtScreen::new(
-                usize::from(pages::terminal_view::TERMINAL_COLS),
-                usize::from(pages::terminal_view::TERMINAL_ROWS),
+            terminal: crate::biz::terminal::Terminal::new(
+                pages::tools::FALLBACK_COLS,
+                pages::tools::FALLBACK_ROWS,
             ),
-            terminal_brushes: std::collections::HashMap::new(),
+            terminal_view: pages::terminal_view::TerminalView::default(),
+            terminal_blink: crate::biz::terminal::Blink::default(),
+            terminal_focused: false,
+            terminal_composing: false,
+            terminal_allowed: true,
+            terminal_lock: pages::terminal_view::TerminalLock::default(),
+            terminal_lock_username: None,
             terminal_id: None,
             terminal_dirty: false,
+            terminal_resize_due: None,
+            tool_widths: pages::tools::DEFAULT_TOOL_WIDTHS,
+            tool_splitter_drag: None,
+            #[cfg(debug_assertions)]
+            terminal_demo: None,
             transfers: Vec::new(),
             transfers_dirty: false,
             portmaps: Vec::new(),
@@ -250,6 +279,7 @@ impl App {
             pressed_modifiers: 0,
         };
         eprintln!("[App::new] pre-wire");
+        app.terminal_view.metrics = pages::terminal_view::measure_metrics();
         app.wire().map_err(|e| {
             eprintln!("[App::new] wire FAIL: {e}");
             e
@@ -446,13 +476,6 @@ impl App {
         self.click("SessionFullscreen", Action::SessionFullscreen)?;
         // M4 工具面板
         self.click("ToolToggle", Action::ToolToggle)?;
-        self.click("TerminalSend", Action::TerminalSend)?;
-        self.click("TerminalNew", Action::TerminalNew)?;
-        self.click("FileUploadPick", Action::FileUploadPick)?;
-        self.click("FileDownloadPick", Action::FileDownloadPick)?;
-        self.click("PortmapAdd", Action::PortmapAdd)?;
-        self.click("PromptOk", Action::PromptOk)?;
-        self.click("PromptCancel", Action::PromptCancel)?;
         for (name, tab) in [
             ("ToolTabTerminal", 0u8),
             ("ToolTabFiles", 1),
@@ -468,28 +491,24 @@ impl App {
                 Ok(())
             }))?;
             let sender_off = sender;
+            let tab_off = tab;
             toggle.Unchecked(windows::UI::Xaml::RoutedEventHandler::new(move |_, _| {
-                let _ = sender_off; // Unchecked 仅视觉归一
+                // 点了已经选中的 tab：交给 App 判断要不要把选中态补回来
+                sender_off.send(Event::Click(Action::ToolTabUnchecked(tab_off)));
                 Ok(())
             }))?;
         }
-        // 终端输入 Enter 发送
-        {
-            let sender = self.sender();
-            let input: windows::UI::Xaml::UIElement = self.find("TerminalInput")?;
-            input.KeyDown(windows::UI::Xaml::Input::KeyEventHandler::new(
-                move |_, args| {
-                    if let Some(args) = args {
-                        if args.Key()? == windows::System::VirtualKey::Enter {
-                            args.SetHandled(true)?;
-                            let sender = sender.clone();
-                            sender.send(Event::Click(Action::TerminalSend));
-                        }
-                    }
-                    Ok(())
-                },
-            ))?;
-        }
+        self.click("TerminalNew", Action::TerminalNew)?;
+        self.click("TerminalClose", Action::TerminalClose)?;
+        self.click("TerminalLockSubmit", Action::TerminalLockSubmit)?;
+        self.click("TerminalBehind", Action::TerminalToBottom)?;
+        self.click("FileUploadPick", Action::FileUploadPick)?;
+        self.click("FileDownloadPick", Action::FileDownloadPick)?;
+        self.click("PortmapAdd", Action::PortmapAdd)?;
+        self.click("PromptOk", Action::PromptOk)?;
+        self.click("PromptCancel", Action::PromptCancel)?;
+        self.wire_terminal()?;
+        self.wire_tool_splitter()?;
         // M3.2 画质工具条：任一下拉变更 → 统一预钳制后下发
         for name in [
             "StreamResolutionBox",
@@ -925,6 +944,9 @@ impl App {
                 }
                 Event::SessionPointer(pointer) => self.on_session_pointer(pointer)?,
                 Event::SessionKey(key) => self.on_session_key(key)?,
+                Event::Terminal(event) => self.on_terminal_event(event)?,
+                Event::ClipboardRead(result) => self.on_clipboard_read(result)?,
+                Event::ToolSplitter(delta) => self.on_tool_splitter(delta)?,
                 Event::CertRenewFinished(result) => self.on_cert_renew_finished(result)?,
                 Event::WolFinished(target, result) => {
                     let name = self
@@ -1172,11 +1194,17 @@ impl App {
                 host.close();
             }
         }
+        #[cfg(debug_assertions)]
+        self.pump_terminal_demo()?;
         if !self.logged_in {
             return Ok(());
         }
         eprintln!("[on_tick] logged_in");
         self.tick += 1;
+        // 工具面板开着时每半秒按窗口的可用范围重夹一次面板宽度（窗口拉大 / 缩小后跟上）
+        if self.tool_panel_visible && self.tick % 10 == 0 {
+            self.apply_tool_width()?;
+        }
         let generation = self.runtime.generation();
         let events = self.runtime.poll();
         // M5：信令入站中继桥接（被控开关未开 → 快速拒绝）
@@ -1215,6 +1243,7 @@ impl App {
             }
         }
         for update in session_updates {
+            self.apply_terminal_update(&update)?;
             if let SessionUpdate::Hud(snap) = &update {
                 self.session_hud = Some(snap.clone());
                 hud_dirty = true;
@@ -1497,8 +1526,15 @@ impl App {
             }
             Action::ToolToggle => self.on_tool_toggle(),
             Action::ToolTab(tab) => self.on_tool_tab(tab),
-            Action::TerminalSend => self.on_terminal_send(),
+            Action::ToolTabUnchecked(tab) => self.on_tool_tab_unchecked(tab),
             Action::TerminalNew => self.on_terminal_new(),
+            Action::TerminalClose => self.on_terminal_close(),
+            Action::TerminalToBottom => {
+                self.terminal.scroll_to_bottom();
+                self.terminal_dirty = true;
+                Ok(())
+            }
+            Action::TerminalLockSubmit => self.on_terminal_lock_submit(),
             Action::FileUploadPick => self.on_file_upload_pick(),
             Action::FileDownloadPick => self.on_file_download_pick(),
             Action::TransferCancel(id) => self.on_transfer_cancel(id),
@@ -1834,7 +1870,7 @@ fn digit_of(text: &str) -> String {
     text.chars().filter(|c| c.is_ascii_digit()).collect()
 }
 
-fn copy_to_clipboard(text: &str) {
+pub(crate) fn copy_to_clipboard(text: &str) {
     use windows::ApplicationModel::DataTransfer::{Clipboard, DataPackage};
     let package = DataPackage::new().expect("创建剪贴板数据包");
     package
