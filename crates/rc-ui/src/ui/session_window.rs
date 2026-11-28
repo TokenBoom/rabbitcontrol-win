@@ -65,18 +65,20 @@ impl SessionWindow {
     /// 创建并装载会话 XAML（不显示）。
     pub fn new() -> Result<Self> {
         unsafe {
-            let instance = GetModuleHandleW(None)?;
+            use crate::app::WithContext;
+            let instance = GetModuleHandleW(None).ctx(|| "会话窗口：取模块实例".to_string())?;
             let name = HSTRING::from("RabbitControlSessionWindow");
             let class = WNDCLASSW {
                 hInstance: instance,
                 lpszClassName: PCWSTR(name.as_wide().as_ptr()),
                 lpfnWndProc: Some(session_wndproc),
-                hCursor: LoadCursorW(None, IDC_ARROW)?,
+                hCursor: LoadCursorW(None, IDC_ARROW).ctx(|| "会话窗口：加载光标".to_string())?,
                 hIcon: LoadIconW(instance, PCWSTR(1 as _)).unwrap_or_default(),
                 ..Default::default()
             };
             if RegisterClassW(&class) == 0 {
-                return Err(Error::from_win32());
+                // 同一进程里重复注册会失败（类已存在）；这里只会创建一次，失败即是真问题
+                return Err(Error::from_win32()).ctx(|| "会话窗口：注册窗口类".to_string());
             }
             let hwnd = CreateWindowExW(
                 WINDOW_EX_STYLE::default(),
@@ -93,18 +95,28 @@ impl SessionWindow {
                 std::ptr::null(),
             );
             if hwnd.0 == 0 {
-                return Err(Error::from_win32());
+                return Err(Error::from_win32()).ctx(|| "会话窗口：CreateWindowExW".to_string());
             }
-            let source = DesktopWindowXamlSource::new()?;
+            let source =
+                DesktopWindowXamlSource::new().ctx(|| "会话窗口：创建 XAML Island".to_string())?;
             let native: windows::Win32::System::WinRT::Xaml::IDesktopWindowXamlSourceNative2 =
                 source.cast()?;
-            native.AttachToWindow(hwnd)?;
-            let island = native.WindowHandle()?;
+            native
+                .AttachToWindow(hwnd)
+                .ctx(|| "会话窗口：XAML Island 挂到窗口".to_string())?;
+            let island = native
+                .WindowHandle()
+                .ctx(|| "会话窗口：取 Island 子窗口".to_string())?;
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, island.0);
             fit_island(hwnd, island);
-            let content = XamlReader::Load(include_str!("assets/session_window.xaml"))?;
-            let root: FrameworkElement = content.cast()?;
-            source.SetContent(&root)?;
+            let content = XamlReader::Load(include_str!("assets/session_window.xaml"))
+                .ctx(|| "会话窗口：解析 XAML".to_string())?;
+            let root: FrameworkElement = content
+                .cast()
+                .ctx(|| "会话窗口：XAML 根节点类型".to_string())?;
+            source
+                .SetContent(&root)
+                .ctx(|| "会话窗口：装载 XAML".to_string())?;
             Ok(Self {
                 hwnd,
                 _source: source,

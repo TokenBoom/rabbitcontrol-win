@@ -303,7 +303,7 @@ impl App {
         ] {
             let sender = self.sender();
             // 0.37 投影下继承成员经 ButtonBase 接口访问。
-            let button: ButtonBase = self.root.FindName(name)?.cast()?;
+            let button: ButtonBase = self.find(name)?;
             button.Click(RoutedEventHandler::new(move |_, _| {
                 sender.send(Event::Click(Action::Nav(page)));
                 Ok(())
@@ -637,9 +637,11 @@ impl App {
         Ok(())
     }
 
+    /// 绑定按钮点击。必须走 [`Self::find`]（主窗口 + 会话窗口双根）：会话窗口里的按钮
+    /// 不在主窗口的名称作用域里，直接在主窗口根上按名字找会得到「操作成功完成。」假错误。
     fn click(&self, name: &str, action: Action) -> Result<()> {
         let sender = self.sender();
-        let button: ButtonBase = self.root.FindName(name)?.cast()?;
+        let button: ButtonBase = self.find(name)?;
         button.Click(RoutedEventHandler::new(move |_, _| {
             sender.send(Event::Click(action.clone()));
             Ok(())
@@ -649,7 +651,7 @@ impl App {
 
     fn key_enter(&self, name: &str, action: Action) -> Result<()> {
         let sender = self.sender();
-        let element: UIElement = self.root.FindName(name)?.cast()?;
+        let element: UIElement = self.find(name)?;
         element.KeyDown(KeyEventHandler::new(move |_, args| {
             if let Some(args) = args {
                 if args.Key()? == VirtualKey::Enter {
@@ -664,7 +666,7 @@ impl App {
 
     fn switch_toggled(&self, name: &str, action: Action) -> Result<()> {
         let sender = self.sender();
-        let toggle: ToggleSwitch = self.root.FindName(name)?.cast()?;
+        let toggle: ToggleSwitch = self.find(name)?;
         let toggle_ref = toggle.clone();
         // `Toggled` 事件只带「开关现在开没开」，要按原操作的种类带上这个布尔值再派发。
         // 不是开关类操作就在接线时报错——这里不允许兜底。
@@ -686,7 +688,7 @@ impl App {
 
     fn settings_tab(&self, name: &str, index: u8) -> Result<()> {
         let sender = self.sender();
-        let tab: ToggleButton = self.root.FindName(name)?.cast()?;
+        let tab: ToggleButton = self.find(name)?;
         tab.Checked(RoutedEventHandler::new(move |_, _| {
             sender.send(Event::Click(Action::SettingsTab(index)));
             Ok(())

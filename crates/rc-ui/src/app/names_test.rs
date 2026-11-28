@@ -370,3 +370,61 @@ fn the_scanner_itself_works() {
         ]
     );
 }
+
+/// 直接在主窗口根上按名字查找（`self.root.FindName("…"`），只对主窗口里的元素成立。
+///
+/// 会话窗口有自己独立的 XAML 根：它的按钮必须经 `find()`（双根）查找。曾经接线的辅助函数
+/// 只在主窗口根上找，会话窗口的第一个按钮就让接线中断，任何连接都发不出去。
+#[test]
+fn direct_main_root_lookups_only_target_main_window_elements() {
+    let main_names: std::collections::HashSet<&str> = xaml_names(MAIN_XAML).into_iter().collect();
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    collect_rust_files(&crate_dir.join("src").join("app"), &mut files);
+    let mut wrong = Vec::new();
+    let mut seen = 0;
+    for file in &files {
+        let source = strip_comment_lines(&std::fs::read_to_string(file).expect("读取源码"));
+        let relative = file
+            .strip_prefix(crate_dir)
+            .unwrap_or(file)
+            .display()
+            .to_string();
+        // 只看明确写在主窗口根上的查找；行模板在自己的容器上 FindName 是合法的
+        let call = "self.root.FindName(";
+        let pattern = format!("{call}\"");
+        let mut from = 0;
+        while let Some(pos) = source[from..].find(&pattern) {
+            let start = from + pos;
+            from = start + pattern.len();
+            let Some((name, end)) = quoted_after(&source, start + call.len()) else {
+                continue;
+            };
+            seen += 1;
+            if !main_names.contains(name.as_str()) {
+                wrong.push(format!("{name}  ({relative}:{})", line_of(&source, start)));
+            }
+            from = end;
+        }
+    }
+    assert!(seen > 0, "扫描异常：没找到任何直接在主窗口根上的查找");
+    assert!(
+        wrong.is_empty(),
+        "这些元素不在主窗口里，不能直接在主窗口根上按名字查找（会话窗口的元素请用 find()）：\n{}",
+        wrong.join("\n")
+    );
+}
+
+/// `…("Name"`：跳过空白后读取紧跟的字符串字面量。
+fn quoted_after(source: &str, mut at: usize) -> Option<(String, usize)> {
+    let bytes = source.as_bytes();
+    while bytes.get(at).is_some_and(u8::is_ascii_whitespace) {
+        at += 1;
+    }
+    if bytes.get(at) != Some(&b'"') {
+        return None;
+    }
+    let start = at + 1;
+    let end = start + source[start..].find('"')?;
+    Some((source[start..end].to_string(), end))
+}
