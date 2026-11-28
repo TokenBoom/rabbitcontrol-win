@@ -951,17 +951,10 @@ impl App {
         let updates = self.host_rt.poll();
         for update in updates {
             match update {
-                rc_client_core::host_bridge::HostUpdate::Listening { .. } => {
-                    let code = self.host_rt.temp_code.clone();
-                    let _ = self.label(
-                        "HostCode",
-                        if code.is_empty() {
-                            "——— ———"
-                        } else {
-                            &code
-                        },
-                    );
-                    let _ = self.set_visible("HostCodeBadge", !code.is_empty());
+                rc_client_core::host_bridge::HostUpdate::Listening { .. }
+                | rc_client_core::host_bridge::HostUpdate::PasswordRotated { .. } => {
+                    // 会话结束后的临时码轮换也要刷到界面上，否则显示的还是已经作废的旧码
+                    self.refresh_host_code()?;
                 }
                 rc_client_core::host_bridge::HostUpdate::ApprovalRequested(prompt) => {
                     self.approval_generation = Some(prompt.generation);
@@ -1030,6 +1023,38 @@ impl App {
         Ok(())
     }
 
+    /// 把当前访问码（自定义密码或临时码）刷到主界面的码标签上。
+    fn refresh_host_code(&mut self) -> Result<()> {
+        let code = self.host_rt.temp_code.clone();
+        self.label(
+            "HostCode",
+            if code.is_empty() {
+                "——— ———"
+            } else {
+                &code
+            },
+        )?;
+        self.set_visible("HostCodeBadge", !code.is_empty())
+    }
+
+    /// 信令客户端换了一个（重建 / 停止）后同步给被控服务（core v0.2.6+）。
+    fn sync_host_signal_client(&mut self) {
+        let signal_client = self.runtime.signal_client();
+        self.host_rt.set_signal_client(signal_client);
+    }
+
+    /// 退出登录（或被顶下线）时停掉被控服务，并把信令句柄从被控服务手里收回。
+    ///
+    /// 「允许被控」的落盘状态不动：下次登录时 `open_main` 自动续上。
+    pub(crate) fn stop_host_for_logout(&mut self) {
+        self.host_rt.set_signal_client(None);
+        self.host_rt.stop_for_logout();
+        self.approval_generation = None;
+        let _ = self.set_visible("HostBanner", false);
+        let _ = self.set_visible("HostCodeBadge", false);
+        let _ = self.set_visible("HostApprovalOverlay", false);
+    }
+
     /// M5：被控开关（后台线程启动，避免阻塞 UI）。
     ///
     /// 开关状态落盘：主界面关掉后，后台被控进程按同一状态接管；重启后也保持。
@@ -1062,10 +1087,15 @@ impl App {
         let manager = self.auth.manager();
         let events = self.sender();
         let allow_file_transfer = self.allow_file_transfer;
+        let signal_client = self.runtime.signal_client();
         self.set_busy(true)?;
         thread::spawn(move || {
-            let result =
-                rc_appcore::host::HostRuntime::start(&manager, password, allow_file_transfer);
+            let result = rc_appcore::host::HostRuntime::start(
+                &manager,
+                password,
+                allow_file_transfer,
+                signal_client,
+            );
             events.send(Event::HostStarted(result));
         });
         Ok(())
@@ -1115,6 +1145,7 @@ impl App {
             self.auth.stop_maintainer();
             self.runtime.stop();
             self.set_busy(false)?;
+            self.stop_host_for_logout();
             self.return_to_login(format!("已退出登录：{reason}"))?;
             return Ok(());
         }

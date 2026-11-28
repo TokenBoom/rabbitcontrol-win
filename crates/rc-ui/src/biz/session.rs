@@ -11,7 +11,7 @@ use rc_client_core::auth_client::AuthSessionManager;
 use rc_client_core::input_bridge;
 use rc_client_core::relay_transport::SessionMtlsBundle;
 use rc_client_core::session_bridge::{SessionHandle, SessionUpdate, UiSessionConfig};
-use rc_client_core::signal_client::ConnectGrant;
+use rc_client_core::signal_client::{ConnectGrant, SignalClientHandle};
 use rc_session::auth::OwnerTicketSigner;
 
 /// 连接参数（UI → 后台线程的纯值包）。
@@ -27,6 +27,8 @@ pub struct ConnectParams {
     pub fps: u32,
     /// LAN 直连候选地址（可选加速）。
     pub lan_direct: Option<String>,
+    /// 信令客户端句柄（core v0.2.6+：P2P → 中继降级时用它重新申请中继）。
+    pub signal_client: Option<std::sync::Arc<SignalClientHandle>>,
 }
 
 /// `request_connect` 阻塞上限。
@@ -76,7 +78,10 @@ pub fn build_session_config(
         .transpose()?
         .map(|signer| std::sync::Arc::new(signer) as std::sync::Arc<dyn OwnerTicketSigner>);
 
+    let target_device_id = grant.target_id.clone();
     Ok(UiSessionConfig {
+        signal_client: params.signal_client.clone(),
+        target_device_id: Some(target_device_id),
         connect_addr: grant
             .peer_public_addr
             .clone()

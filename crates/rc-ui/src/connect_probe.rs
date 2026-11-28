@@ -140,6 +140,7 @@ fn probe(code: &str, seconds: u64, args: &[String]) -> Result<String, String> {
         bitrate_bps: sess::bitrate_preset_to_bps("14m"),
         fps: 60,
         lan_direct: None,
+        signal_client: runtime.signal_client(),
     };
     let cfg = sess::build_session_config(&auth_runtime.manager(), grant, &params)?;
     let handle = SessionHandle::spawn(cfg);

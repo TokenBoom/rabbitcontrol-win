@@ -35,7 +35,7 @@ pub struct RuntimeEvents {
 }
 
 struct Inner {
-    signal: Option<SignalClientHandle>,
+    signal: Option<Arc<SignalClientHandle>>,
     lan: Option<LanDiscoveryHandle>,
 }
 
@@ -44,6 +44,21 @@ pub struct SignalRuntime {
     manager: Arc<AuthSessionManager>,
     inner: Mutex<Inner>,
     generation: AtomicU64,
+}
+
+/// 停掉一个交出去过的信令句柄。
+///
+/// 句柄可能还被在途的会话 / 被控配置引用着：先请求后台线程立刻收尾（共享引用也管用，
+/// 否则旧连接会多活一会儿，触发服务端的重复登录顶号），本运行时独占时再原地等它退出；
+/// 仍有别人引用时，由最后一个引用释放时的 `Drop` 完成清理。
+fn retire_signal(signal: Option<Arc<SignalClientHandle>>) {
+    let Some(signal) = signal else {
+        return;
+    };
+    signal.request_stop();
+    if let Ok(mut sole) = Arc::try_unwrap(signal) {
+        sole.stop();
+    }
 }
 
 impl SignalRuntime {
@@ -90,9 +105,7 @@ impl SignalRuntime {
         let device_pubkey = Some(self.manager.cert_manager().device_pubkey_hex());
 
         let mut inner = self.inner.lock().expect("信令运行时锁");
-        if let Some(mut old) = inner.signal.take() {
-            old.stop();
-        }
+        retire_signal(inner.signal.take());
         inner.lan = None;
 
         let signal = SignalClientHandle::spawn_with_options(
@@ -111,7 +124,7 @@ impl SignalRuntime {
             },
             |_| {},
         );
-        inner.signal = Some(signal);
+        inner.signal = Some(Arc::new(signal));
         // 局域网发现只在服务器已配置时启动。发现线程一起来就绑定 UDP
         // `0.0.0.0:19999`——服务器未配置时它没有任何用处，却会让 Windows
         // 防火墙为每个新编译出的程序（包括 `cargo test` 的测试程序）弹一次
@@ -134,10 +147,16 @@ impl SignalRuntime {
     pub fn stop(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
         let mut inner = self.inner.lock().expect("信令运行时锁");
-        if let Some(mut signal) = inner.signal.take() {
-            signal.stop();
-        }
+        retire_signal(inner.signal.take());
         inner.lan = None;
+    }
+
+    /// 当前信令客户端句柄（未启动时返回 None）。
+    ///
+    /// 交给会话 / 被控配置（core v0.2.6+ 的 `signal_client`）：会话运行期 P2P → 中继降级时用它
+    /// 重新申请中继，被控端中继 → P2P 复探时用它刷新 STUN 映射并复用 UDP 端口。
+    pub fn signal_client(&self) -> Option<Arc<SignalClientHandle>> {
+        self.inner.lock().expect("信令运行时锁").signal.clone()
     }
 
     /// 当前信令状态快照（未启动时返回 None）。

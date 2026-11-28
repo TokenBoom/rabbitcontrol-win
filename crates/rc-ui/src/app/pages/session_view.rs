@@ -231,6 +231,7 @@ impl App {
                 .iter()
                 .find(|p| p.device_id.as_deref() == Some(code))
                 .map(|p| p.addr.clone()),
+            signal_client: self.runtime.signal_client(),
         };
         let name = self
             .devices

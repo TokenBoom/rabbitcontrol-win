@@ -58,6 +58,7 @@ impl App {
 
     pub(crate) fn do_logout(&mut self) -> Result<()> {
         self.auth.stop_maintainer();
+        self.stop_host_for_logout();
         self.runtime.stop();
         self.set_busy(true)?;
         let manager = self.auth.manager();
@@ -99,6 +100,8 @@ impl App {
                 self.label("AssistError", &format!("信令启动失败：{err}")),
             )?;
         }
+        // 信令换了句柄：被控服务手里的那份跟着换
+        self.sync_host_signal_client();
         ctx("渲染设备列表", self.render_devices())?;
         ctx("渲染历史记录", self.render_history())?;
         self.page = Page::Devices;
@@ -120,6 +123,7 @@ impl App {
 
     pub(crate) fn return_to_login(&mut self, message: String) -> Result<()> {
         self.auth.stop_maintainer();
+        self.stop_host_for_logout();
         self.runtime.stop();
         self.logged_in = false;
         self.devices.clear();

@@ -11,6 +11,7 @@ use std::time::Duration;
 use rc_client_core::auth_client::AuthSessionManager;
 use rc_client_core::host_bridge::{generate_temp_code, HostHandle, HostUpdate, UiHostConfig};
 use rc_client_core::relay_transport::SessionMtlsBundle;
+use rc_client_core::signal_client::SignalClientHandle;
 use rc_session::auth::DEFAULT_AUTH_TIMEOUT_US;
 
 /// 被控默认监听地址（端口被占自动回退临时端口）。
@@ -57,6 +58,7 @@ impl HostRuntime {
         manager: &AuthSessionManager,
         password: Option<String>,
         allow_file_transfer: bool,
+        signal_client: Option<Arc<SignalClientHandle>>,
     ) -> Result<StartedHost, String> {
         let mtls_config = build_mtls(manager)?;
         let owner_verifier = build_owner_verifier(manager);
@@ -79,8 +81,19 @@ impl HostRuntime {
             accept_mtls_lan: true,
             forbid_passwordless_auto_approve: false,
             file_transfer_dir: None,
+            signal_client,
         })?;
         Ok(StartedHost { handle, password })
+    }
+
+    /// 信令客户端换了一个（重建 / 停止）后同步给被控服务（core v0.2.6+）。
+    ///
+    /// 被控服务留着它的句柄是为了会话运行期「中继 → P2P」复探时刷新 STUN 映射并复用
+    /// UDP 端口；句柄过期不复探，所以信令一换就要跟着换，停了就交回 `None`。
+    pub fn set_signal_client(&mut self, signal_client: Option<Arc<SignalClientHandle>>) {
+        if let Some(handle) = self.handle.as_ref() {
+            handle.set_signal_client(signal_client);
+        }
     }
 
     /// 安放刚启动的被控服务（句柄 + 当前访问密码）。
@@ -136,6 +149,12 @@ impl HostRuntime {
             handle.stop_with_reason(reason);
         }
         self.reset();
+    }
+
+    /// 退出登录时停掉被控服务：没有账号就没有 mTLS 身份，不该再对外服务；
+    /// 在途控制端收到「正常结束」的告别。
+    pub fn stop_for_logout(&mut self) {
+        self.stop_with_reason(rc_session::proto::ByeReason::Normal);
     }
 
     fn reset(&mut self) {
