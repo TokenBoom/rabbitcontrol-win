@@ -297,14 +297,11 @@ impl Engine {
                 },
             ));
         }
-        if let Err(err) = self.runtime.sync() {
+        if let Err(err) = self.runtime.sync(self.prefs.allow_remote_assist) {
             return self.go_idle(Some(format!("信令启动失败：{err}")));
         }
         // 信令换了句柄：被控服务手里的那份跟着换（中继 → P2P 复探要用）
         self.host.set_signal_client(self.runtime.signal_client());
-        let _ = self
-            .runtime
-            .set_allow_remote_assist(self.prefs.allow_remote_assist);
         self.state = RunState::Active;
         diag_log!(
             "已接管：信令已启动，被控服务{}",

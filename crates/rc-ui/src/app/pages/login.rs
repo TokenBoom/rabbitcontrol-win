@@ -94,7 +94,9 @@ impl App {
         ctx("显示主界面", self.set_visible("MainShell", true))?;
         ctx("记录 DPI", self.apply_scale())?;
         ctx("载入设置", self.load_prefs_into_ui())?;
-        if let Err(err) = self.runtime.sync() {
+        // 信令按保存的门控重建：注册帧第一次上报的就是用户设置的那一档
+        let allow_remote_assist = self.prefs.lock().unwrap().allow_remote_assist;
+        if let Err(err) = self.runtime.sync(allow_remote_assist) {
             ctx(
                 "信令启动失败提示",
                 self.label("AssistError", &format!("信令启动失败：{err}")),

@@ -131,7 +131,7 @@ fn probe(code: &str, seconds: u64, args: &[String]) -> Result<String, String> {
     let account = sign_in(&auth_runtime.manager(), &auth_runtime.server_path(), args)?;
 
     let runtime = SignalRuntime::new(auth_runtime.manager());
-    runtime.sync()?;
+    runtime.sync(true)?;
     wait_signal_online(&runtime)?;
     eprintln!("[probe] 请求连接 {code} …");
     let grant = runtime.request_connect(code, sess::CONNECT_TIMEOUT)?;

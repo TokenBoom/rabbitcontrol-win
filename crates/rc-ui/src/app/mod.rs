@@ -1470,8 +1470,18 @@ impl App {
                 Ok(())
             }
             Action::AssistToggled(on) => {
-                if let Err(err) = self.runtime.set_allow_remote_assist(on) {
-                    self.label("AssistError", &err)?;
+                // 回填保存的偏好时开关同样会发 Toggled：与已存值一致就不是用户在操作。
+                // 那一刻信令多半还没连上，抢着发门控只会得到一句「信令服务器尚未连接完成」。
+                if on == self.prefs.lock().unwrap().allow_remote_assist {
+                    return Ok(());
+                }
+                let sent = self.runtime.set_allow_remote_assist(on);
+                // 信令没在线时发送会失败，但门控已经记进客户端、重连后的注册帧会带上，
+                // 不值得打扰用户
+                if self.signal_online {
+                    if let Err(err) = sent {
+                        self.label("AssistError", &err)?;
+                    }
                 }
                 // 被控服务在跑：门控同步热切换（只对之后的新连接生效）
                 self.host_rt.set_allow_remote_assist(on);

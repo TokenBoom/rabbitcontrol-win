@@ -81,9 +81,14 @@ impl SignalRuntime {
 
     /// 登录/恢复会话后同步：停掉旧信令与 LAN 发现，按当前服务器配置重建。
     ///
+    /// `allow_remote_assist` 是用户保存的「允许他人远程协助」门控：建客户端时
+    /// 就带上，注册帧第一次上报的就是对的——不必等连上以后再补发一次
+    /// （那时 [`Self::set_allow_remote_assist`] 才发得出去，补发失败还会被
+    /// 当成用户操作的失败弹出来）。
+    ///
     /// 返回新代数；服务器未配置时同样成功（信令保持 Disabled 态、不启动
     /// 局域网发现，`snapshot` 可探测到）。
-    pub fn sync(&self) -> Result<u64, String> {
+    pub fn sync(&self, allow_remote_assist: bool) -> Result<u64, String> {
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let cfg = self.manager.server_config();
         // 与 core 信令客户端判定「启用」的条件一致：不满足时信令本就不建连。
@@ -116,7 +121,7 @@ impl SignalRuntime {
                 token_provider: Some(token_provider),
                 token_refresher: Some(token_refresher),
                 device_pubkey,
-                allow_remote_assist: true,
+                allow_remote_assist,
                 // v0.1.23 双权限模型：同账号控制与远程协助分开开关。
                 allow_remote_control: Some(true),
                 dynamic_lan_discovery: true,
@@ -198,6 +203,10 @@ impl SignalRuntime {
     }
 
     /// 实时切换「允许他人远程协助」门控。
+    ///
+    /// 门控先记进信令客户端、再尝试发 `UpdateAssistState`：信令还没连上时发送
+    /// 会失败，但值已经存下，重连后的注册帧会带上它——调用方在离线时可以
+    /// 忽略这个错误。
     pub fn set_allow_remote_assist(&self, allow: bool) -> Result<(), String> {
         let inner = self.inner.lock().expect("信令运行时锁");
         match inner.signal.as_ref() {
@@ -308,7 +317,7 @@ mod tests {
     fn sync_and_stop_advance_generation() {
         let (runtime, dir) = test_runtime("gen");
         let gen0 = runtime.generation();
-        let gen1 = runtime.sync().expect("sync 失败");
+        let gen1 = runtime.sync(true).expect("sync 失败");
         assert_eq!(gen1, gen0 + 1);
         assert!(runtime.snapshot().is_some());
         // 服务器未配置：信令已建但保持 Disabled，且不得启动局域网发现
