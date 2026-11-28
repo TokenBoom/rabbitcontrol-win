@@ -547,9 +547,14 @@ impl App {
             let panel: SwapChainPanel = self.find("SessionPanel")?;
             let panel_ui: UIElement = panel.cast()?;
             let sender_moved = sender.clone();
+            // 坐标要相对舞台面板自己：GetCurrentPoint(None) 给的是相对整个 XAML 根的坐标，
+            // 拿它当面板坐标用，远端指针会偏掉一个标题栏的高度（工具面板开着时还偏一个面板宽）
+            let reference = panel_ui.clone();
             panel_ui.PointerMoved(PointerEventHandler::new(move |_, args| {
                 if let Some(args) = args {
-                    let pos = args.GetCurrentPoint(None).and_then(|pt| pt.Position())?;
+                    let pos = args
+                        .GetCurrentPoint(&reference)
+                        .and_then(|pt| pt.Position())?;
                     let sender = sender_moved.clone();
                     sender.send(Event::SessionPointer(SessionPointerEvent::Move {
                         x: f64::from(pos.X),
@@ -560,9 +565,10 @@ impl App {
             }))?;
             let panel_press: UIElement = panel.clone().cast()?;
             let sender_press = sender.clone();
+            let reference = panel_press.clone();
             panel_press.PointerPressed(PointerEventHandler::new(move |_, args| {
                 if let Some(args) = args {
-                    let pt = args.GetCurrentPoint(None)?;
+                    let pt = args.GetCurrentPoint(&reference)?;
                     let pos = pt.Position()?;
                     let props = pt.Properties()?;
                     let button = if props.IsLeftButtonPressed()? {
@@ -588,9 +594,10 @@ impl App {
             let panel_released: SwapChainPanel = panel.clone();
             let panel_release: UIElement = panel_released.cast()?;
             let sender_release = sender.clone();
+            let reference = panel_release.clone();
             panel_release.PointerReleased(PointerEventHandler::new(move |_, args| {
                 if let Some(args) = args {
-                    let pt = args.GetCurrentPoint(None)?;
+                    let pt = args.GetCurrentPoint(&reference)?;
                     let pos = pt.Position()?;
                     let props = pt.Properties()?;
                     let button = if !props.IsLeftButtonPressed()? {
