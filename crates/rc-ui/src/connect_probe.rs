@@ -149,6 +149,8 @@ fn probe(code: &str, seconds: u64, args: &[String]) -> Result<String, String> {
     let mut negotiated: Option<String> = None;
     let mut frames_seen = 0u32;
     let mut ended: Option<String> = None;
+    // 被控端最近一次上报的（锁屏，采集挂起）
+    let mut host_screen: Option<(bool, bool)> = None;
     while Instant::now() < deadline && ended.is_none() {
         while let Some(update) = handle.try_recv_update() {
             match update {
@@ -190,6 +192,20 @@ fn probe(code: &str, seconds: u64, args: &[String]) -> Result<String, String> {
                         hud.resolution
                     );
                 }
+                SessionUpdate::HostScreenState {
+                    locked,
+                    capture_suspended,
+                } => {
+                    if host_screen != Some((locked, capture_suspended)) {
+                        host_screen = Some((locked, capture_suspended));
+                        eprintln!(
+                            "[probe] 远端状态：锁屏 {locked} · 采集挂起 {capture_suspended}{}",
+                            sess::host_screen_hint(locked, capture_suspended)
+                                .map(|hint| format!("（{hint}）"))
+                                .unwrap_or_default()
+                        );
+                    }
+                }
                 SessionUpdate::Ended { reason, .. } => ended = Some(reason),
                 _ => {}
             }
@@ -207,8 +223,12 @@ fn probe(code: &str, seconds: u64, args: &[String]) -> Result<String, String> {
     }
     let negotiated = negotiated.ok_or("没有完成协商（被控端没有回应，或握手失败）")?;
     if frames_seen == 0 {
+        let suspended = host_screen
+            .and_then(|(locked, suspended)| sess::host_screen_hint(locked, suspended))
+            .map(|hint| format!("；{hint}"))
+            .unwrap_or_default();
         return Err(format!(
-            "已协商（{negotiated}），但 {seconds} 秒内没有收到任何画面（帧率始终为 0）"
+            "已协商（{negotiated}），但 {seconds} 秒内没有收到任何画面（帧率始终为 0）{suspended}"
         ));
     }
     Ok(format!("{negotiated}；{} 次统计都收到了画面", frames_seen))

@@ -80,6 +80,8 @@ pub struct App {
     session: Option<ActiveSession>,
     session_view: SessionView,
     session_hud: Option<rc_client_core::hud::HudSnapshot>,
+    /// 被控端锁屏 / 熄屏导致画面挂起时的提示；画面正常为 `None`。
+    host_screen_hint: Option<&'static str>,
     quality: sess::QualityState,
     quality_fps_options: Vec<u32>,
     quality_sig: String,
@@ -200,6 +202,7 @@ impl App {
             session: None,
             session_view: SessionView::Idle,
             session_hud: None,
+            host_screen_hint: None,
             quality: sess::QualityState::default(),
             quality_fps_options: Vec::new(),
             quality_sig: String::new(),
@@ -1206,6 +1209,15 @@ impl App {
             }
             if matches!(update, SessionUpdate::Ended { .. }) {
                 session_running = false;
+                self.host_screen_hint = None;
+            }
+            // 被控端锁屏 / 熄屏 → 采集挂起、没有画面，说明原因而不是让人对着黑屏等
+            if let SessionUpdate::HostScreenState {
+                locked,
+                capture_suspended,
+            } = &update
+            {
+                self.host_screen_hint = sess::host_screen_hint(*locked, *capture_suspended);
             }
             // M3.7：远端切换桌面 → 短延迟自动重连（不计入次数）
             if let SessionUpdate::SessionSwitching { reason } = &update {

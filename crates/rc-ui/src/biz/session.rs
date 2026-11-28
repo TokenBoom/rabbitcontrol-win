@@ -301,6 +301,21 @@ pub fn connect_phase_text(phase: &rc_client_core::session_bridge::ConnectPhase) 
     }
 }
 
+/// 被控端画面挂起（没有画面可收）时给用户的提示；画面正常时为 `None`。
+///
+/// 只在采集挂起时提示：Windows 被控端锁屏后采不到安全桌面，画面真的停了；macOS 被控端
+/// 锁屏期间仍会送锁屏画面、可以直接键鼠解锁，不该拿提示把画面盖住。
+pub fn host_screen_hint(locked: bool, capture_suspended: bool) -> Option<&'static str> {
+    if !capture_suspended {
+        return None;
+    }
+    Some(if locked {
+        "远端电脑已锁屏，画面已暂停，解锁后自动恢复"
+    } else {
+        "远端屏幕已熄灭，正在唤醒…"
+    })
+}
+
 /// 输入几何：窗口（stage）坐标 → 归一化 0–65535（黑边补偿）。
 pub fn normalize_in_video(
     x: f64,
@@ -339,6 +354,21 @@ pub fn join_session(handle: SessionHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_screen_hint_only_when_capture_is_suspended() {
+        assert_eq!(
+            host_screen_hint(true, true),
+            Some("远端电脑已锁屏，画面已暂停，解锁后自动恢复")
+        );
+        assert_eq!(
+            host_screen_hint(false, true),
+            Some("远端屏幕已熄灭，正在唤醒…")
+        );
+        // 锁屏但画面还在送（macOS 被控端）：不盖住画面
+        assert_eq!(host_screen_hint(true, false), None);
+        assert_eq!(host_screen_hint(false, false), None);
+    }
 
     #[test]
     fn stream_request_clamping() {

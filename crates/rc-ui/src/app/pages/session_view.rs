@@ -240,6 +240,7 @@ impl App {
             .unwrap_or_else(|| code.to_string());
         // M3.6：会话 UI 迁入独立窗口；主窗口留在当前页。
         // 先把会话窗口建出来，再改它里面的元素（顺序反了查找会落空）。
+        self.host_screen_hint = None;
         self.ensure_session_window(&name)?;
         self.set_session_overlay("正在连接…", true);
         let _ = self.set_visible("SessionReconnect", false);
@@ -303,7 +304,10 @@ impl App {
                 let _ = self.label("SessionStatus", &status);
                 let badge = format!("{backend} · {transport}",);
                 let _ = self.label("SessionBackend", &badge);
-                self.set_session_overlay("", false);
+                match self.host_screen_hint {
+                    Some(hint) => self.set_session_overlay(hint, false),
+                    None => self.set_session_overlay("", false),
+                }
                 self.apply_hud();
             }
             SessionView::Ended(reason) => {
