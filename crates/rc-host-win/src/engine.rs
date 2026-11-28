@@ -636,9 +636,13 @@ impl Engine {
             .filter(|p| !p.is_empty());
         match HostRuntime::start(
             &self.manager,
-            password,
-            self.prefs.allow_assist_file_transfer,
-            self.runtime.signal_client(),
+            rc_appcore::host::HostOptions {
+                password,
+                allow_file_transfer: self.prefs.allow_assist_file_transfer,
+                allow_remote_assist: self.prefs.allow_remote_assist,
+                accept_mtls_lan: self.prefs.default_encrypt_connection,
+                signal_client: self.runtime.signal_client(),
+            },
         ) {
             Ok(started) => {
                 // 首个访问密码（自定义密码或刚生成的临时码）

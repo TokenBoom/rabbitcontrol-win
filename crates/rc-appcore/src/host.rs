@@ -39,6 +39,21 @@ pub struct HostRuntime {
     pub connected_peer: Option<String>,
 }
 
+/// 启动被控服务的可调项（都来自用户设置；主界面与后台进程共用同一份偏好）。
+#[derive(Debug, Clone, Default)]
+pub struct HostOptions {
+    /// 自定义访问密码；`None` = 用临时验证码（每次远控结束自动刷新）。
+    pub password: Option<String>,
+    /// 他人远程协助本机时是否允许文件互传。
+    pub allow_file_transfer: bool,
+    /// 是否允许非同账号的他人远程协助（`false` = 只允许同账号本人自控）。
+    pub allow_remote_assist: bool,
+    /// 局域网直连监听是否强制 mTLS（与「默认开启加密连接」同一个开关）。
+    pub accept_mtls_lan: bool,
+    /// 信令客户端句柄（core v0.2.6+：中继 → P2P 复探用）。
+    pub signal_client: Option<Arc<SignalClientHandle>>,
+}
+
 impl HostRuntime {
     /// 未启用状态下的被控运行时。
     pub fn new() -> Self {
@@ -50,18 +65,24 @@ impl HostRuntime {
         }
     }
 
-    /// 启动被控服务（密码可选；OwnerTicket 免密自控常开）。
+    /// 启动被控服务（OwnerTicket 免密自控常开）。
     ///
     /// 没设自定义密码时先发一个临时码：core 只在一次会话结束后轮换临时码，
     /// 第一个要由应用生成并交给被控服务（与 macOS agent 的做法一致）。
     pub fn start(
         manager: &AuthSessionManager,
-        password: Option<String>,
-        allow_file_transfer: bool,
-        signal_client: Option<Arc<SignalClientHandle>>,
+        options: HostOptions,
     ) -> Result<StartedHost, String> {
+        let HostOptions {
+            password,
+            allow_file_transfer,
+            allow_remote_assist,
+            accept_mtls_lan,
+            signal_client,
+        } = options;
         let mtls_config = build_mtls(manager)?;
         let owner_verifier = build_owner_verifier(manager);
+        let custom = password.is_some();
         let password = password.unwrap_or_else(generate_temp_code);
         let handle = HostHandle::spawn(UiHostConfig {
             listen_addr: DEFAULT_HOST_LISTEN,
@@ -70,15 +91,16 @@ impl HostRuntime {
             prefer_hardware: true,
             require_approval: true,
             auto_accept_with_password: true,
-            auto_rotate_password: true,
+            // 临时码每次远控结束换一个；自定义密码固定不变
+            auto_rotate_password: !custom,
             clipboard_enabled: true,
             audio_enabled: true,
             allow_owner_control: true,
-            allow_remote_assist: true,
+            allow_remote_assist,
             allow_assist_file_transfer: allow_file_transfer,
             owner_verifier,
             mtls_config: Some(mtls_config),
-            accept_mtls_lan: true,
+            accept_mtls_lan,
             forbid_passwordless_auto_approve: false,
             file_transfer_dir: None,
             signal_client,
@@ -94,6 +116,40 @@ impl HostRuntime {
         if let Some(handle) = self.handle.as_ref() {
             handle.set_signal_client(signal_client);
         }
+    }
+
+    /// 切换访问密码模式：`password` 为 `None` 时换一个新的临时码（每次远控结束再换），
+    /// 否则用固定的自定义密码。对下一次新握手生效；core 不会为手动切换发事件，
+    /// 所以当前访问码在这里就地更新。
+    pub fn set_password_mode(&mut self, password: Option<String>) {
+        let Some(handle) = self.handle.as_ref() else {
+            return;
+        };
+        let custom = password.is_some();
+        let password = password.unwrap_or_else(generate_temp_code);
+        handle.set_password_mode(Some(password.clone()), !custom);
+        self.temp_code = password;
+    }
+
+    /// 实时切换「允许他人远程协助」门控（被控服务未运行时什么都不做）。
+    pub fn set_allow_remote_assist(&mut self, allow: bool) {
+        if let Some(handle) = self.handle.as_ref() {
+            handle.set_allow_remote_assist(allow);
+        }
+    }
+
+    /// 设备证书续签后把新的 mTLS 束交给被控服务（会话中途换证书，不必重启被控服务）。
+    pub fn refresh_mtls(
+        &mut self,
+        manager: &AuthSessionManager,
+        accept_mtls_lan: bool,
+    ) -> Result<(), String> {
+        let Some(handle) = self.handle.as_ref() else {
+            return Ok(());
+        };
+        let mtls_config = build_mtls(manager)?;
+        handle.set_mtls_config(Some(mtls_config), accept_mtls_lan);
+        Ok(())
     }
 
     /// 安放刚启动的被控服务（句柄 + 当前访问密码）。

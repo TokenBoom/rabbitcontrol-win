@@ -82,6 +82,8 @@ pub struct App {
     session_hud: Option<rc_client_core::hud::HudSnapshot>,
     /// 被控端锁屏 / 熄屏导致画面挂起时的提示；画面正常为 `None`。
     host_screen_hint: Option<&'static str>,
+    /// 设置页「被控验证方式」当前记着的模式（`true` = 自定义密码）；用来区分用户操作与载入设置时的拨动。
+    host_verify_custom: Option<bool>,
     quality: sess::QualityState,
     quality_fps_options: Vec<u32>,
     quality_sig: String,
@@ -203,6 +205,7 @@ impl App {
             session_view: SessionView::Idle,
             session_hud: None,
             host_screen_hint: None,
+            host_verify_custom: None,
             quality: sess::QualityState::default(),
             quality_fps_options: Vec::new(),
             quality_sig: String::new(),
@@ -390,6 +393,21 @@ impl App {
         self.switch_toggled("HostSwitch", Action::HostToggle(true))?;
         self.switch_toggled("AutoStartToggle", Action::AutoStartToggled(true))?;
         self.switch_toggled("FileTransferToggle", Action::FileTransferToggled(true))?;
+        self.click("HostVerifySaveButton", Action::HostVerifySave)?;
+        self.click("HostRotateCodeButton", Action::HostRotateCode)?;
+        self.click("CertRenewButton", Action::CertRenew)?;
+        {
+            let sender = self.sender();
+            let combo: windows::UI::Xaml::Controls::Primitives::Selector = self
+                .find::<ComboBox>("HostVerifyMode")?
+                .cast::<windows::UI::Xaml::Controls::Primitives::Selector>()?;
+            combo.SelectionChanged(
+                windows::UI::Xaml::Controls::SelectionChangedEventHandler::new(move |_, _| {
+                    sender.send(Event::Click(Action::HostVerifyModeChanged));
+                    Ok(())
+                }),
+            )?;
+        }
         self.click("ProxyApplyButton", Action::ProxyApply)?;
         self.click("BackToLogin", Action::BackToLogin)?;
         self.click("CheckUpdateButton", Action::CheckUpdate)?;
@@ -886,6 +904,7 @@ impl App {
                 }
                 Event::SessionPointer(pointer) => self.on_session_pointer(pointer)?,
                 Event::SessionKey(key) => self.on_session_key(key)?,
+                Event::CertRenewFinished(result) => self.on_cert_renew_finished(result)?,
                 Event::WolFinished(target, result) => {
                     let name = self
                         .devices
@@ -1086,16 +1105,22 @@ impl App {
         self.save_prefs_patch(move |prefs| prefs.apply_security_patch(patch))?;
         let manager = self.auth.manager();
         let events = self.sender();
-        let allow_file_transfer = self.allow_file_transfer;
         let signal_client = self.runtime.signal_client();
+        // 先把两个值读出来：结构体字面量里的临时锁要活到整条语句结束，锁两次非重入互斥量会自己把自己锁死
+        let (allow_remote_assist, accept_mtls_lan) = {
+            let prefs = self.prefs.lock().unwrap();
+            (prefs.allow_remote_assist, prefs.default_encrypt_connection)
+        };
+        let options = rc_appcore::host::HostOptions {
+            password,
+            allow_file_transfer: self.allow_file_transfer,
+            allow_remote_assist,
+            accept_mtls_lan,
+            signal_client,
+        };
         self.set_busy(true)?;
         thread::spawn(move || {
-            let result = rc_appcore::host::HostRuntime::start(
-                &manager,
-                password,
-                allow_file_transfer,
-                signal_client,
-            );
+            let result = rc_appcore::host::HostRuntime::start(&manager, options);
             events.send(Event::HostStarted(result));
         });
         Ok(())
@@ -1397,6 +1422,8 @@ impl App {
                 if let Err(err) = self.runtime.set_allow_remote_assist(on) {
                     self.label("AssistError", &err)?;
                 }
+                // 被控服务在跑：门控同步热切换（只对之后的新连接生效）
+                self.host_rt.set_allow_remote_assist(on);
                 self.save_prefs_patch(|prefs| {
                     prefs.apply_security_patch(rc_client_core::app_prefs::SecurityPrefsPatch {
                         allow_remote_assist: Some(on),
@@ -1425,7 +1452,12 @@ impl App {
             Action::SessionDisconnect => {
                 self.manual_disconnect = true;
                 self.pending_reconnect_tick = None;
+                // 「断开后锁定远程屏幕」：先请被控端锁屏，再断开
+                let lock_on_exit = self.prefs.lock().unwrap().lock_on_exit;
                 if let Some(active) = self.session.as_ref() {
+                    if lock_on_exit {
+                        active.handle.request_lock_on_disconnect();
+                    }
                     sess::disconnect(&active.handle);
                 }
                 Ok(())
@@ -1498,14 +1530,21 @@ impl App {
             Action::FileTransferToggled(on) => {
                 // v0.2.2 工具权限门控：先记住期望值（下次启动被控服务时生效），
                 // 被控服务已在运行则同时热切换
-                self.allow_file_transfer = on;
-                if let Some(handle) = self.host_rt.handle.as_ref() {
-                    handle.set_allow_assist_file_transfer(on);
+                let saved = self.on_security_toggle(
+                    "FileTransferToggle",
+                    |prefs: &mut rc_client_core::app_prefs::AppPrefs| {
+                        prefs.allow_assist_file_transfer = on;
+                        Ok(())
+                    },
+                    "已保存安全设置",
+                )?;
+                if saved {
+                    self.allow_file_transfer = on;
+                    if let Some(handle) = self.host_rt.handle.as_ref() {
+                        handle.set_allow_assist_file_transfer(on);
+                    }
                 }
-                self.save_prefs_patch(move |prefs| {
-                    prefs.allow_assist_file_transfer = on;
-                    Ok(())
-                })
+                Ok(())
             }
             Action::HostToggle(on) => self.on_host_toggle(on),
             Action::HostApprove => self.on_host_approval(true),
@@ -1632,18 +1671,41 @@ impl App {
                     ..Default::default()
                 })
             }),
-            Action::EncryptToggled(on) => self.save_prefs_patch(|prefs| {
-                prefs.apply_security_patch(rc_client_core::app_prefs::SecurityPrefsPatch {
-                    default_encrypt_connection: Some(on),
-                    ..Default::default()
-                })
-            }),
-            Action::LockOnExitToggled(on) => self.save_prefs_patch(|prefs| {
-                prefs.apply_stream_patch(rc_client_core::app_prefs::StreamPrefsPatch {
-                    lock_on_exit: Some(on),
-                    ..Default::default()
-                })
-            }),
+            // 安全 tab 的开关：写入偏好并落盘，成功后页内提示，失败把开关拨回原位
+            Action::EncryptToggled(on) => {
+                let saved = self.on_security_toggle(
+                    "EncryptToggle",
+                    |prefs| {
+                        prefs.apply_security_patch(rc_client_core::app_prefs::SecurityPrefsPatch {
+                            default_encrypt_connection: Some(on),
+                            ..Default::default()
+                        })
+                    },
+                    "已保存安全设置：新会话与被控端的局域网直连按新的加密设置生效",
+                )?;
+                if saved {
+                    // 被控端局域网直连监听是否强制 mTLS 跟着这个开关走
+                    let manager = self.auth.manager();
+                    let _ = self.host_rt.refresh_mtls(&manager, on);
+                }
+                Ok(())
+            }
+            Action::LockOnExitToggled(on) => self
+                .on_security_toggle(
+                    "LockOnExitToggle",
+                    |prefs| {
+                        prefs.apply_stream_patch(rc_client_core::app_prefs::StreamPrefsPatch {
+                            lock_on_exit: Some(on),
+                            ..Default::default()
+                        })
+                    },
+                    "已保存安全设置",
+                )
+                .map(|_| ()),
+            Action::HostVerifyModeChanged => self.on_host_verify_mode(),
+            Action::HostVerifySave => self.on_host_verify_save(),
+            Action::HostRotateCode => self.on_host_rotate_code(),
+            Action::CertRenew => self.on_cert_renew(),
             Action::BannerDisconnect => {
                 self.label(
                     "AssistError",

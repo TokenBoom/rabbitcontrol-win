@@ -68,6 +68,14 @@ pub(crate) enum Action {
     ProxyApply,
     FileTransferToggled(bool),
     CheckUpdate,
+    /// 设置页「被控验证方式」下拉变了。
+    HostVerifyModeChanged,
+    /// 设置页保存自定义访问密码。
+    HostVerifySave,
+    /// 设置页刷新临时验证码。
+    HostRotateCode,
+    /// 设置页「立即续签」本机设备证书。
+    CertRenew,
     BackToLogin,
     WolWake(String),
     HostToggle(bool),
@@ -95,6 +103,8 @@ pub(crate) enum Event {
     /// 启动时的后台检查：只在有新版本时发出，仅更新文案、不改 busy 状态。
     UpdateAvailable(String),
     WolFinished(String, std::result::Result<String, String>),
+    /// 设备证书续签结果（后台线程）。
+    CertRenewFinished(std::result::Result<String, String>),
 }
 
 /// 会话启动结果（Box 降低 Event 枚举整体尺寸）。

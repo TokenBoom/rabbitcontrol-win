@@ -142,6 +142,8 @@ fn probe(code: &str, seconds: u64, args: &[String]) -> Result<String, String> {
         fps: 60,
         lan_direct: None,
         signal_client: runtime.signal_client(),
+        // 探针自己登录签了设备证书：按默认设置走端到端加密
+        encrypt_connection: true,
     };
     let cfg = sess::build_session_config(&auth_runtime.manager(), grant, &params)?;
     let handle = SessionHandle::spawn(cfg);

@@ -342,19 +342,6 @@
                   <ToggleSwitch x:Name="AutoStartToggle" Grid.Column="1" OnContent="" OffContent="" Margin="0" IsEnabled="True"/>
                 </Grid>
               </Border>
-              <Border Style="{StaticResource SettingRowBorder}">
-                <Grid>
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                  </Grid.ColumnDefinitions>
-                  <StackPanel Spacing="2">
-                    <TextBlock Text="默认开启加密连接" Style="{StaticResource BodyText}"/>
-                    <TextBlock Text="会话建立时优先协商 mTLS 端到端加密" Style="{StaticResource CaptionText}"/>
-                  </StackPanel>
-                  <ToggleSwitch x:Name="EncryptToggle" Grid.Column="1" OnContent="" OffContent="" Margin="0"/>
-                </Grid>
-              </Border>
               <TextBlock Text="出站代理" Style="{StaticResource CaptionText}" Margin="0,10,0,4"/>
               <Border Style="{StaticResource SettingRowBorder}">
                 <Grid>
@@ -413,6 +400,19 @@
                     <ColumnDefinition Width="Auto"/>
                   </Grid.ColumnDefinitions>
                   <StackPanel Spacing="2">
+                    <TextBlock Text="默认开启加密连接 (mTLS)" Style="{StaticResource BodyText}"/>
+                    <TextBlock Text="会话建立时优先协商 mTLS 端到端加密；需要本机设备证书" Style="{StaticResource CaptionText}" TextWrapping="Wrap"/>
+                  </StackPanel>
+                  <ToggleSwitch x:Name="EncryptToggle" Grid.Column="1" OnContent="" OffContent="" Margin="0"/>
+                </Grid>
+              </Border>
+              <Border Style="{StaticResource SettingRowBorder}">
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                  </Grid.ColumnDefinitions>
+                  <StackPanel Spacing="2">
                     <TextBlock Text="断开后锁定远程屏幕" Style="{StaticResource BodyText}"/>
                     <TextBlock Text="主动断开被控会话时自动锁定对方屏幕" Style="{StaticResource CaptionText}"/>
                   </StackPanel>
@@ -420,16 +420,33 @@
                 </Grid>
               </Border>
               <Border Style="{StaticResource SettingRowBorder}">
+                <StackPanel Spacing="10">
+                  <StackPanel Spacing="2">
+                    <TextBlock Text="被控验证方式" Style="{StaticResource BodyText}"/>
+                    <TextBlock Text="临时验证码每次远控结束自动刷新；自定义密码固定不变。密码验证通过后自动接受连接" Style="{StaticResource CaptionText}" TextWrapping="Wrap"/>
+                  </StackPanel>
+                  <ComboBox x:Name="HostVerifyMode" HorizontalAlignment="Left" MinWidth="280" Height="32" SelectedIndex="0">
+                    <ComboBoxItem Content="临时验证码（自动刷新）"/>
+                    <ComboBoxItem Content="自定义密码"/>
+                  </ComboBox>
+                  <StackPanel x:Name="HostVerifyCustomPanel" Orientation="Horizontal" Spacing="6" Visibility="Collapsed">
+                    <PasswordBox x:Name="HostVerifyPassword" Width="220" Height="32" PlaceholderText="自定义访问密码"/>
+                    <Button x:Name="HostVerifySaveButton" Content="保存密码" Style="{StaticResource SecondaryButton}" Height="32"/>
+                  </StackPanel>
+                  <Button x:Name="HostRotateCodeButton" Content="刷新临时验证码" Style="{StaticResource SecondaryButton}" Height="32" HorizontalAlignment="Left"/>
+                </StackPanel>
+              </Border>
+              <Border Style="{StaticResource SettingRowBorder}">
                 <Grid>
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                   </Grid.ColumnDefinitions>
                   <StackPanel Spacing="2">
-                    <TextBlock Text="被控验证方式" Style="{StaticResource BodyText}"/>
-                    <TextBlock Text="临时验证码（每次远控结束轮换）· 自定义密码 · 密码通过自动接受" Style="{StaticResource CaptionText}" TextWrapping="Wrap"/>
+                    <TextBlock Text="本机 mTLS 设备证书" Style="{StaticResource BodyText}"/>
+                    <TextBlock x:Name="CertStatusText" Text="未签发（请先登录）" Style="{StaticResource CaptionText}" TextWrapping="Wrap"/>
                   </StackPanel>
-                  <Button x:Name="HostVerifyButton" Grid.Column="1" Content="接通后可用" Style="{StaticResource SecondaryButton}" IsEnabled="False"/>
+                  <Button x:Name="CertRenewButton" Grid.Column="1" Content="立即续签" Style="{StaticResource SecondaryButton}" Height="32"/>
                 </Grid>
               </Border>
               <Border Style="{StaticResource SettingRowBorder}">
@@ -439,12 +456,13 @@
                     <ColumnDefinition Width="Auto"/>
                   </Grid.ColumnDefinitions>
                   <StackPanel Spacing="2">
-                    <TextBlock Text="允许文件互传" Style="{StaticResource BodyText}"/>
+                    <TextBlock Text="被远程协助时允许文件互传" Style="{StaticResource BodyText}"/>
                     <TextBlock Text="被控会话中允许对端通过工具通道传输文件" Style="{StaticResource CaptionText}"/>
                   </StackPanel>
                   <ToggleSwitch x:Name="FileTransferToggle" Grid.Column="1" OnContent="" OffContent="" Margin="0"/>
                 </Grid>
               </Border>
+              <TextBlock x:Name="SecurityStatus" FontSize="12" Foreground="{ThemeResource TextTertiaryBrush}" TextWrapping="Wrap" Margin="24,0,24,0"/>
             </StackPanel>
 
             <StackPanel x:Name="PanelNetwork" Spacing="10" Visibility="Collapsed">

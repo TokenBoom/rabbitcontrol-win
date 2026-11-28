@@ -256,6 +256,10 @@ fn bind_device_and_ensure_cert(
     let pubkey_hex = manager.cert_manager().device_pubkey_hex();
     let hostname = local_hostname();
     let os_name = std::env::consts::OS.to_string();
+    // 与「允许他人远程协助」开关同一个值：关着的时候服务端不该把本机列给别人
+    let allow_remote_assist =
+        rc_client_core::app_prefs::load_from_path(&rc_client_core::app_prefs::default_prefs_path())
+            .allow_remote_assist;
 
     let bound = with_valid_token(manager, |client, token| {
         client.bind_device(
@@ -268,7 +272,8 @@ fn bind_device_and_ensure_cert(
                 arch: Some(std::env::consts::ARCH.to_string()),
                 alias: None,
                 device_pubkey: Some(pubkey_hex.clone()),
-                allow_remote_assist: Some(true),
+                // 与「允许他人远程协助」开关同一个值：关着的时候服务端不该把本机列给别人
+                allow_remote_assist: Some(allow_remote_assist),
             },
         )
     })
@@ -288,6 +293,19 @@ fn bind_device_and_ensure_cert(
         .ensure_device_cert(&bound.device_id)
         .map_err(format_auth_error)?;
     Ok(bound.device_id)
+}
+
+/// 立即续签本机 mTLS 设备证书（设置页「立即续签」）：清掉旧证书后重新绑定并签发，
+/// 返回设备码。没登录时做不了。
+pub fn renew_device_cert(
+    manager: &AuthSessionManager,
+    server_path: &Path,
+) -> Result<String, String> {
+    if manager.current_session().is_none() {
+        return Err("请先登录".to_string());
+    }
+    manager.cert_manager().clear_device_cert()?;
+    bind_device_and_ensure_cert(manager, server_path)
 }
 
 fn with_valid_token<T>(

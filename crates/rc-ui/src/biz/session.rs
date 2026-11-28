@@ -29,6 +29,8 @@ pub struct ConnectParams {
     pub lan_direct: Option<String>,
     /// 信令客户端句柄（core v0.2.6+：P2P → 中继降级时用它重新申请中继）。
     pub signal_client: Option<std::sync::Arc<SignalClientHandle>>,
+    /// 是否开启端到端 mTLS / E2EE 加密（设置页「默认开启加密连接」）。
+    pub encrypt_connection: bool,
 }
 
 /// `request_connect` 阻塞上限。
@@ -37,7 +39,8 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 /// 组装 `UiSessionConfig`：凭据 + mTLS 束 + Owner 免密签名器。
 ///
 /// 语义对齐 iOS `SessionService.open`：
-/// - `encrypt_connection` 恒开（服务端中继强制客户端证书）；
+/// - `encrypt_connection` 跟随设置页「默认开启加密连接」（服务端中继本身强制客户端证书，
+///   所以无论开关如何都要有设备证书）；
 /// - `mtls_config` 由设备证书 + 锚定 CA + 本账号 user_id 组装，
 ///   `expected_peer_device_id` 留空由会话桥按 `grant.target_id` 填充；
 /// - `grant.owner_grant` 存在时构造 OwnerTicket 签名器（同账号免密）。
@@ -100,7 +103,7 @@ pub fn build_session_config(
         connection_mode: Default::default(),
         tools_only: false,
         audio_enabled: false, // M3.5 WASAPI 播放器落地后开启
-        encrypt_connection: true,
+        encrypt_connection: params.encrypt_connection,
         mtls_config: Some(mtls_config),
         owner_grant: None,
         owner_signer,

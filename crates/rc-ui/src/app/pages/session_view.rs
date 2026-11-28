@@ -219,11 +219,17 @@ impl App {
             .and_then(|v| v.Value().ok())
             .unwrap_or(false);
         self.peer_watch_only = watch_only;
-        let preset = self.prefs.lock().unwrap().bitrate_preset.clone();
+        let (bitrate_preset, encrypt_connection) = {
+            let prefs = self.prefs.lock().unwrap();
+            (
+                prefs.bitrate_preset.clone(),
+                prefs.default_encrypt_connection,
+            )
+        };
         let params = sess::ConnectParams {
             password,
             watch_only,
-            bitrate_bps: sess::bitrate_preset_to_bps(&preset),
+            bitrate_bps: sess::bitrate_preset_to_bps(&bitrate_preset),
             fps: 60,
             lan_direct: self
                 .runtime
@@ -232,6 +238,7 @@ impl App {
                 .find(|p| p.device_id.as_deref() == Some(code))
                 .map(|p| p.addr.clone()),
             signal_client: self.runtime.signal_client(),
+            encrypt_connection,
         };
         let name = self
             .devices
